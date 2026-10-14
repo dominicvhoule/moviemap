@@ -110,7 +110,7 @@ MM.matchFilm = async function(title, year){
 
 // Full details for one TMDB id: director, Wikidata id, production countries.
 MM.filmDetails = async function(id){
-  const cacheKey = "mm-tmdb2:" + id;
+  const cacheKey = "mm-tmdb3:" + id;
   const hit = lsGet(cacheKey, null); if(hit) return hit;
   const d = await tmdb("/movie/" + id, {append_to_response:"external_ids,credits"});
   if(!d) return null;
@@ -120,7 +120,7 @@ MM.filmDetails = async function(id){
     d:dirs.slice(0,3).join(", "), poster:d.poster_path || null,
     qid:(d.external_ids && d.external_ids.wikidata_id) || null,
     pc:(d.production_countries||[]).map(c=>c.name),
-    iso:[...(d.production_countries||[]).map(c=>c.iso_3166_1), ...(d.origin_country||[])].filter(Boolean)
+    iso:[...(d.origin_country||[]), ...(d.production_countries||[]).map(c=>c.iso_3166_1)].filter(Boolean)
   };
   lsSet(cacheKey, out);
   return out;
@@ -188,7 +188,7 @@ MM.wikidataSettings = async function(qids){
         const name = b.countryLabel ? b.countryLabel.value : "";
         const pt = MM.countryPoint(name); if(!pt) return;
         out[f] = {p:MM.displayCountry(name), c:MM.displayCountry(name), cont:MM.fixContinent(b.contLabel ? b.contLabel.value : ""),
-          lon:+pt[0].toFixed(3), lat:+pt[1].toFixed(3), ap:1, n:FALLBACK_NOTE, src:"production"};
+          lon:+pt[0].toFixed(3), lat:+pt[1].toFixed(3), ap:1, n:FALLBACK_NOTE, src:"production", weak:1};
       });
     }catch(e){}
   }
@@ -227,8 +227,10 @@ function pickSetting(rows){
 let regionNames = null;
 try{ regionNames = new Intl.DisplayNames(["en"], {type:"region"}); }catch(e){}
 MM.fallbackSetting = function(det){
-  const names = [...((det && det.pc) || [])];
+  // TMDB's origin country is the film's primary country, so it goes first; then production countries.
+  const names = [];
   ((det && det.iso) || []).forEach(code=>{ try{ const n = regionNames && regionNames.of(code); if(n) names.push(n); }catch(e){} });
+  names.push(...((det && det.pc) || []));
   for(const c of names){
     const pt = MM.countryPoint(c);
     if(pt) return {p:MM.displayCountry(c), c:MM.displayCountry(c), cont:"", lon:+pt[0].toFixed(3), lat:+pt[1].toFixed(3), ap:1, n:FALLBACK_NOTE, src:"production"};
@@ -238,26 +240,40 @@ MM.fallbackSetting = function(det){
 
 // Shared cache of resolved settings (Supabase when signed in, plus this browser).
 MM.settingCache = {
-  get(id){ return lsGet("mm-set:" + id, null); },
-  put(id, s){ lsSet("mm-set:" + id, s); }
+  get(id){ return lsGet("mm-set2:" + id, null); },
+  put(id, s){ lsSet("mm-set2:" + id, s); }
+};
+
+// Hand-checked settings (the featured starter map). Matched by title, including alternate titles.
+MM.curated = function(det, entryTitle){
+  const F = window.FEATURED; if(!F) return null;
+  const titles = [det && det.t, det && det.ot, entryTitle].filter(Boolean).map(MM.norm);
+  const y = det && +det.y;
+  const f = F.films.find(x=>[x.t, ...(x.aka||[])].some(n=>titles.includes(MM.norm(n))) && !(x.y && y && Math.abs(x.y - y) > 1));
+  if(!f) return null;
+  return {p:f.p, c:f.c, cont:"", lat:f.lat, lon:f.lon, ap:f.ap ? 1 : 0, n:f.n || "", src:"curated"};
 };
 
 // Resolve a list of TMDB-matched films to full log entries with a setting. onStep(done, total) reports progress.
-MM.resolveSettings = async function(dets, onStep){
-  const need = dets.filter(d=>d && !MM.settingCache.get(d.tmdb));
+MM.resolveSettings = async function(dets, onStep, titles){
+  const curated = new Map();
+  dets.forEach((d,i)=>{ if(!d) return; const c = MM.curated(d, titles && titles[i]); if(c) curated.set(d.tmdb, c); });
+  const need = dets.filter(d=>d && !curated.has(d.tmdb) && !MM.settingCache.get(d.tmdb));
   if(MM.remoteSettings && need.length){
-    try{ const got = await MM.remoteSettings(need.map(d=>d.tmdb)); Object.keys(got).forEach(id=>MM.settingCache.put(id, got[id])); }catch(e){}
+    // Only trust shared entries that came from a recorded setting; country fallbacks get re-checked.
+    try{ const got = await MM.remoteSettings(need.map(d=>d.tmdb)); Object.keys(got).forEach(id=>{ if(got[id].src === "wikidata") MM.settingCache.put(id, got[id]); }); }catch(e){}
   }
   const still = need.filter(d=>!MM.settingCache.get(d.tmdb));
   const wd = await MM.wikidataSettings(still.map(d=>d.qid));
   const fresh = {};
   still.forEach(d=>{
-    const s = (d.qid && wd[d.qid]) || MM.fallbackSetting(d);
+    const w = d.qid && wd[d.qid];
+    const s = (w && !w.weak ? w : null) || MM.fallbackSetting(d) || w;
     if(s){ MM.settingCache.put(d.tmdb, s); fresh[d.tmdb] = s; }
   });
   if(MM.saveRemoteSettings && Object.keys(fresh).length){ try{ await MM.saveRemoteSettings(fresh); }catch(e){} }
   if(onStep) onStep(dets.length, dets.length);
-  return dets.map(d=>d ? MM.settingCache.get(d.tmdb) : null);
+  return dets.map(d=>d ? (curated.get(d.tmdb) || MM.settingCache.get(d.tmdb)) : null);
 };
 
 /* ---------------- avatar colour ---------------- */

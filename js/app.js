@@ -56,7 +56,7 @@ if(sb){
   };
   MM.saveRemoteSettings = async map => {
     if(!session) return;
-    const rows = Object.keys(map).map(id=>{ const s = map[id]; return {tmdb_id:+id, place:s.p, country:s.c, continent:s.cont||null, lat:s.lat, lon:s.lon, approx:!!s.ap, note:s.n||null, source:s.src}; });
+    const rows = Object.keys(map).filter(id=>["wikidata","production"].includes(map[id].src)).map(id=>{ const s = map[id]; return {tmdb_id:+id, place:s.p, country:s.c, continent:s.cont||null, lat:s.lat, lon:s.lon, approx:!!s.ap, note:s.n||null, source:s.src}; });
     for(let i=0; i<rows.length; i+=200) await sb.from("film_settings").upsert(rows.slice(i, i+200), {onConflict:"tmdb_id", ignoreDuplicates:true});
   };
 }
@@ -88,7 +88,7 @@ const Store = {
   async update(f, patch){
     if(cloud() && f.id){
       const row = toRow(Object.assign({}, f, patch));
-      const {error} = await sb.from("logs").update({lat:row.lat, lon:row.lon, approx:row.approx, place:row.place, country:row.country, rating:row.rating, source:row.source}).eq("id", f.id);
+      const {error} = await sb.from("logs").update({lat:row.lat, lon:row.lon, approx:row.approx, place:row.place, country:row.country, continent:row.continent, note:row.note, rating:row.rating, source:row.source}).eq("id", f.id);
       if(error) throw error;
     } else if(!cloud()){
       const cur = MM.lsGet(LOCAL, []); const k = MM.filmKey(f);
@@ -512,7 +512,7 @@ async function placeEntries(entries, progress){
     return d;
   });
   const found = dets.filter(Boolean);
-  const settings = await MM.resolveSettings(found);
+  const settings = await MM.resolveSettings(found, null, entries.filter((e,i)=>dets[i]).map(e=>e.t));
   const setBy = new Map(found.map((d,i)=>[d.tmdb, settings[i]]));
   const ready = [], unmatched = [], unplaced = [];
   entries.forEach((e,i)=>{
@@ -547,7 +547,7 @@ async function fetchLetterboxdFilms(username, maxPages, onPage){
   const all = [];
   for(let page=1; page<=maxPages; page++){
     const d = await lbInvoke({username, mode:"films", page});
-    if(d.films && d.films.length && d.films[0].slug === undefined) break;   // an older function without list support
+    if(d.films && d.films.length && d.films[0].slug === undefined) throw new Error("old_function");   // the deployed function predates list support
     all.push(...(d.films || []).map(f=>({t:f.title, y:f.year || "", r:f.rating || null, slug:f.slug})));
     onPage && onPage(page, all.length);
     if(!d.more) break;
@@ -567,6 +567,7 @@ const LB_ERRORS = {
   not_found:"Letterboxd has no public profile with that username. Check the spelling, and make sure the profile isn't private.",
   bad_username:"That isn't a valid Letterboxd username.",
   not_deployed:"Letterboxd sync isn't switched on for this site yet.",
+  old_function:"The Letterboxd sync on the server is out of date, so only your diary came through. The site owner needs to redeploy the letterboxd-feed function.",
   upstream:"Letterboxd didn't answer just now. Try again in a few minutes.",
   unreachable:"Letterboxd didn't answer just now. Try again in a few minutes."
 };
@@ -630,8 +631,33 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
     return {error:e.message};
   }finally{ syncing = false; }
 }
+// Re-check pins that were only country guesses (or have a hand-checked setting now). Pins you moved yourself are left alone.
+const FIX_VERSION = "mm-fix-v2:";
+async function refreshSettings(force){
+  if(!cloud()) return;
+  const flag = FIX_VERSION + me.id;
+  if(!force && MM.lsGet(flag, false)) return;
+  const cands = myFilms.filter(f=>f.tmdb && f.src !== "user" && f.src !== "curated");
+  if(!cands.length){ MM.lsSet(flag, true); return; }
+  const dets = await MM.pool(cands, 6, f=>MM.filmDetails(f.tmdb));
+  const pairs = cands.map((f,i)=>[f, dets[i]]).filter(([f,d])=>d);
+  // Recorded (Wikidata) settings stay unless a hand-checked one exists; country guesses get recomputed.
+  const settings = await MM.resolveSettings(pairs.map(([,d])=>d), null, pairs.map(([f])=>f.t));
+  let changed = 0;
+  for(let i=0; i<pairs.length; i++){
+    const [f] = pairs[i], s = settings[i];
+    if(!s) continue;
+    if(f.src === "wikidata" && s.src !== "curated") continue;
+    if(Math.abs(s.lat - f.lat) < 0.01 && Math.abs(s.lon - f.lon) < 0.01) continue;
+    try{ await Store.update(f, {p:s.p, c:s.c, cont:s.cont||"", lat:s.lat, lon:s.lon, ap:s.ap, n:s.n||"", src:s.src}); changed++; }catch(e){}
+  }
+  MM.lsSet(flag, true);
+  if(changed && viewing.mine){ renderAll(); fitPins(true); toast(`Moved ${changed} pin${changed===1?"":"s"} to a better spot`); }
+}
 function maybeAutoSync(){
-  if(!cloud() || !me.letterboxd) return;
+  if(!cloud()) return;
+  refreshSettings(false);
+  if(!me.letterboxd) return;
   const last = MM.lsGet(lbSyncKey(), 0);
   const rep = MM.lsGet(lbReportKey(), null);
   // First time on this browser without a full read yet: read everything once.
