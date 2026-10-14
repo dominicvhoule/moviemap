@@ -272,7 +272,7 @@ function openFilm(f, fly){
       ${f.n ? `<p class="note">${esc(f.n)}</p>` : ""}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${f.r ? `<span class="stars">${stars(f.r)}</span>` : ""}${f.rv ? '<span class="tag">Reviewed</span>' : ""}${f.ap ? '<span class="tag ap">Approx. setting</span>' : ""}${f.watched ? `<span class="tag" style="color:var(--muted)">Watched ${esc(f.watched)}</span>` : ""}</div>
       ${mine ? `<div class="cta"><button class="btn ghost small" id="d-move">Move pin</button><button class="btn ghost small" id="d-del">Remove</button></div>` : ""}
-      ${f.tmdb ? `<a class="linkbtn" href="https://www.themoviedb.org/movie/${encodeURIComponent(f.tmdb)}" target="_blank" rel="noopener">Film page on TMDB ↗</a>` : ""}
+      ${f.tmdb ? `<a class="linkbtn" href="${MM.tmdbPage(f.tmdb)}" target="_blank" rel="noopener">${MM.isTv(f.tmdb) ? "Series" : "Film"} page on TMDB ↗</a>` : ""}
     </div>`;
   detail.querySelector(".x").onclick = closeDetail;
   if(!direct) MM.posterFor(f).then(url=>{
@@ -409,7 +409,7 @@ function renderLog(){
   const q = $("#lq");
   q.addEventListener("input", ()=>{ clearTimeout(searchT); searchT = setTimeout(()=>runSearch(q.value.trim()), 280); });
   q.focus({preventScroll:true});
-  if(pendingLog){ const p = pendingLog; pendingLog = null; q.value = p.t; chooseFilm({tmdb:p.tmdb, t:p.t}); }
+  if(pendingLog){ const p = pendingLog; pendingLog = null; q.value = p.t; chooseFilm({tmdb:p.tmdb, t:p.t, y:p.y}); }
 }
 async function runSearch(text){
   const seq = ++searchSeq, st = $("#ls"), ul = $("#lr");
@@ -424,7 +424,7 @@ async function runSearch(text){
     if(!res.length){ ul.innerHTML = ""; st.textContent = `No films found for "${text}". Check the spelling.`; return; }
     st.textContent = "Pick the one you watched.";
     const mk = myKeys();
-    ul.innerHTML = res.map((m,i)=>`<li><button data-i="${i}"><span class="th" ${m.poster ? `style="background-image:url('${MM.poster(m.poster,"w92")}')"` : ""}></span><span style="min-width:0"><b>${esc(m.t)} <span class="m">${esc(m.y)}</span></b><span class="m">${m.ot && m.ot!==m.t ? esc(m.ot) : ""}</span>${mk.has(MM.filmKey(m)) ? '<br><span class="have">On your map</span>' : ""}</span></button></li>`).join("");
+    ul.innerHTML = res.map((m,i)=>`<li><button data-i="${i}"><span class="th" ${m.poster ? `style="background-image:url('${MM.poster(m.poster,"w92")}')"` : ""}></span><span style="min-width:0"><b>${esc(m.t)} <span class="m">${esc(m.y)}</span></b><span class="m">${m.tv ? "Series" : ""}${m.tv && m.ot && m.ot!==m.t ? " · " : ""}${m.ot && m.ot!==m.t ? esc(m.ot) : ""}</span>${mk.has(MM.filmKey(m)) ? '<br><span class="have">On your map</span>' : ""}</span></button></li>`).join("");
     ul.querySelectorAll("button").forEach(b=>b.onclick = ()=>chooseFilm(res[+b.dataset.i]));
   }catch(e){
     if(seq !== searchSeq) return;
@@ -436,8 +436,16 @@ async function chooseFilm(m){
   const st = $("#ls"); $("#lr").innerHTML = "";
   st.textContent = `Finding where ${m.t} takes place…`; st.classList.add("busy");
   try{
-    const det = await MM.filmDetails(m.tmdb);
-    const [s] = await MM.resolveSettings([det]);
+    const det = (m.tmdb ? await MM.filmDetails(m.tmdb).catch(()=>null) : null) || (m.t ? await MM.matchFilm(m.t, m.y).then(x=>x ? MM.filmDetails(x.id) : null).catch(()=>null) : null);
+    if(!det){
+      // Not in the film database: still let the person pin it by hand.
+      st.classList.remove("busy");
+      draft = {t:m.t, y:m.y||"", d:"", tmdb:null, poster:null, p:"", c:"", lat:NaN, lon:NaN, ap:0, n:"", src:"user", watched:new Date().toISOString().slice(0,10)};
+      draftRating = null;
+      st.textContent = "We couldn't find this one in the film database. Tap Place pin on the map, then tap where it takes place.";
+      return renderConfirm();
+    }
+    const [s] = await MM.resolveSettings([det], null, [m.t]);
     st.classList.remove("busy");
     draft = Object.assign({t:det.t, y:det.y, d:det.d, tmdb:det.tmdb, poster:det.poster}, s || {p:"", c:"", lat:NaN, lon:NaN, ap:1, n:"", src:""});
     draft.watched = new Date().toISOString().slice(0,10);

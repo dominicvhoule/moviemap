@@ -56,9 +56,10 @@ async function feed(username: string) {
       year: Number(tag(s, "letterboxd:filmYear")) || null,
       rating: Number(tag(s, "letterboxd:memberRating")) || null,
       watched: tag(s, "letterboxd:watchedDate") || null,
-      tmdb: Number(tag(s, "tmdb:movieId")) || null,
+      // Series are sent as a negative TMDB id so they never collide with film ids.
+      tmdb: Number(tag(s, "tmdb:movieId")) || -Number(tag(s, "tmdb:tvId")) || null,
     }))
-    .filter((f) => f.title && f.tmdb); // drops list posts and TV entries
+    .filter((f) => f.title && f.tmdb); // drops list posts
   return json({ username, films });
 }
 
@@ -108,7 +109,10 @@ async function filmInfo(slugs: string[]) {
       const res = await get(`https://letterboxd.com/film/${slug}/`);
       if (!res.ok) { out.push({ slug, tmdb: null, year: null }); continue; }
       const html = await res.text();
-      const tmdb = Number(attr(html.match(/<body\b[^>]*>/)?.[0] ?? "", "data-tmdb-id")) || Number(html.match(/themoviedb\.org\/movie\/(\d+)/)?.[1]) || null;
+      const body = html.match(/<body\b[^>]*>/)?.[0] ?? "";
+      const id = Number(attr(body, "data-tmdb-id")) || Number(html.match(/themoviedb\.org\/(?:movie|tv)\/(\d+)/)?.[1]) || 0;
+      const isTv = attr(body, "data-tmdb-type") === "tv" || /themoviedb\.org\/tv\//.test(html);
+      const tmdb = id ? (isTv ? -id : id) : null;
       const og = html.match(/<meta property="og:title" content="([^"]*)"/);
       const y = og ? Number(decode(og[1]).match(/\((\d{4})\)\s*$/)?.[1]) : NaN;
       out.push({ slug, tmdb, year: okYear(y) ? y : null });

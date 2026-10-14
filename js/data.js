@@ -79,44 +79,62 @@ async function tmdb(path, params){
 }
 MM.tmdb = tmdb;
 
+// TV series are stored with a negative TMDB id so they never collide with film ids.
+const fromTv = s => ({id:-s.id, title:s.name, original_title:s.original_name, release_date:s.first_air_date, poster_path:s.poster_path, popularity:s.popularity, tv:true});
+MM.isTv = id => +id < 0;
+MM.tmdbPage = id => "https://www.themoviedb.org/" + (MM.isTv(id) ? "tv/" + (-id) : "movie/" + id);
+
 MM.searchFilms = async function(query){
-  const d = await tmdb("/search/movie", {query, include_adult:"false"});
-  return (d && d.results || []).slice(0, 10).map(m=>({
-    tmdb:m.id, t:m.title, ot:m.original_title, y:m.release_date ? +m.release_date.slice(0,4) : "", poster:m.poster_path, pop:m.popularity||0
+  const [mv, tv] = await Promise.all([
+    tmdb("/search/movie", {query, include_adult:"false"}),
+    tmdb("/search/tv", {query, include_adult:"false"}).catch(()=>null)
+  ]);
+  const films = (mv && mv.results || []).slice(0, 8);
+  const shows = (tv && tv.results || []).slice(0, 4).map(fromTv);
+  return [...films, ...shows].map(m=>({
+    tmdb:m.id, t:m.title, ot:m.original_title, y:m.release_date ? +m.release_date.slice(0,4) : "", poster:m.poster_path, pop:m.popularity||0, tv:!!m.tv
   }));
 };
 
 // Best TMDB match for a title + year (the featured list and feed entries without a TMDB id).
 MM.matchFilm = async function(title, year){
-  const tries = year ? [{year}, {}] : [{}];
-  for(const extra of tries){
-    const d = await tmdb("/search/movie", Object.assign({query:title, include_adult:"false"}, extra));
-    const res = d && d.results || [];
-    if(!res.length) continue;
-    const nt = MM.norm(title);
-    const score = m => {
-      const y = m.release_date ? +m.release_date.slice(0,4) : 0;
-      let s = 0;
-      if(MM.norm(m.title)===nt || MM.norm(m.original_title)===nt) s += 10;
-      if(year && y===+year) s += 8; else if(year && Math.abs(y-year)===1) s += 4;
-      s += Math.min(3, Math.log10(1+(m.popularity||0)));
-      return s;
-    };
-    res.sort((a,b)=>score(b)-score(a));
-    return res[0];
+  const nt = MM.norm(title);
+  const score = m => {
+    const y = m.release_date ? +m.release_date.slice(0,4) : 0;
+    let s = 0;
+    if(MM.norm(m.title)===nt || MM.norm(m.original_title)===nt) s += 10;
+    if(year && y===+year) s += 8; else if(year && Math.abs(y-year)===1) s += 4;
+    s += Math.min(3, Math.log10(1+(m.popularity||0)));
+    return s;
+  };
+  // Films first, then series. Stop early on an exact title (and year) match; otherwise keep the best seen.
+  const searches = year
+    ? [["movie",{year}], ["movie",{}], ["tv",{first_air_date_year:year}], ["tv",{}]]
+    : [["movie",{}], ["tv",{}]];
+  let best = null, bestS = -1;
+  for(const [kind, extra] of searches){
+    const d = await tmdb("/search/" + kind, Object.assign({query:title, include_adult:"false"}, extra));
+    for(const r of (d && d.results || [])){
+      const m = kind === "tv" ? fromTv(r) : r, s = score(m);
+      if(s > bestS){ best = m; bestS = s; }
+    }
+    if(bestS >= (year ? 18 : 10)) break;
   }
-  return null;
+  return (bestS >= 8 || !year) ? best : null;   // with a year, require a title or year match
 };
 
 // Full details for one TMDB id: director, Wikidata id, production countries.
 MM.filmDetails = async function(id){
+  id = +id; if(!id) return null;
   const cacheKey = "mm-tmdb3:" + id;
   const hit = lsGet(cacheKey, null); if(hit) return hit;
-  const d = await tmdb("/movie/" + id, {append_to_response:"external_ids,credits"});
+  const tv = MM.isTv(id);
+  const d = await tmdb((tv ? "/tv/" : "/movie/") + Math.abs(id), {append_to_response:"external_ids,credits"});
   if(!d) return null;
-  const dirs = (d.credits && d.credits.crew || []).filter(c=>c.job==="Director").map(c=>c.name);
+  const dirs = tv ? (d.created_by || []).map(c=>c.name) : (d.credits && d.credits.crew || []).filter(c=>c.job==="Director").map(c=>c.name);
+  const date = tv ? d.first_air_date : d.release_date;
   const out = {
-    tmdb:d.id, t:d.title, ot:d.original_title, y:d.release_date ? +d.release_date.slice(0,4) : "",
+    tmdb:tv ? -d.id : d.id, tv, t:tv ? d.name : d.title, ot:tv ? d.original_name : d.original_title, y:date ? +date.slice(0,4) : "",
     d:dirs.slice(0,3).join(", "), poster:d.poster_path || null,
     qid:(d.external_ids && d.external_ids.wikidata_id) || null,
     pc:(d.production_countries||[]).map(c=>c.name),
