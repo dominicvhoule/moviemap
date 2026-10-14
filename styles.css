@@ -51,6 +51,9 @@ a{color:var(--sky)}
 .clabel.visited{fill:var(--ink);font-weight:500;stroke:var(--visited);opacity:1}
 .pin{cursor:pointer}
 .pin circle.dot{fill:var(--pin);stroke:var(--pin-ring);stroke-width:2;vector-effect:non-scaling-stroke}
+.pin rect.dot{fill:var(--sky);stroke:var(--pin-ring);stroke-width:2;vector-effect:non-scaling-stroke}
+.pin.approx rect.dot{fill:var(--card);stroke:var(--sky);stroke-width:2.5;stroke-dasharray:3 2}
+.pin.sel rect.dot{fill:var(--sun)}
 .pin.approx circle.dot{fill:var(--card);stroke:var(--pin);stroke-width:2.5;stroke-dasharray:3 2}
 .pin.sel circle.dot{fill:var(--sun)}
 .pin text{font-family:var(--f-mono);font-size:10px;font-weight:500;fill:#fff;text-anchor:middle;dominant-baseline:central;pointer-events:none}
@@ -69,6 +72,7 @@ a{color:var(--sky)}
 .legend span{display:inline-flex;align-items:center;gap:6px}
 .legend i{width:11px;height:11px;border-radius:50%;background:var(--pin);display:inline-block}
 .legend i.a{background:var(--card);border:2px dashed var(--pin)}
+.legend i.s{border-radius:2px;background:var(--sky)}
 .legend i.c{border-radius:2px;background:var(--visited);border:1px solid var(--border)}
 .pickhint{position:absolute;left:50%;top:16px;transform:translateX(-50%);background:#1C2733;color:#EDEFEA;padding:8px 14px;font-weight:500;font-size:14px;white-space:nowrap}
 
@@ -102,7 +106,7 @@ a{color:var(--sky)}
 .avatar{width:48px;height:48px;border-radius:50%;display:grid;place-items:center;font-family:var(--f-display);font-weight:800;font-size:22px;color:#fff;flex:none;text-transform:uppercase}
 .who h1{margin:0;font-family:var(--f-display);font-weight:800;font-size:24px;line-height:1;text-transform:uppercase;overflow-wrap:anywhere}
 .who p{margin:2px 0 0;color:var(--muted);font-size:13px}
-.stats{display:grid;grid-template-columns:repeat(3,1fr);border:1px solid var(--line)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line)}
 .stats div{padding:8px 10px}
 .stats div+div{border-left:1px solid var(--line)}
 .stats b{display:block;font-family:var(--f-display);font-weight:800;font-size:28px;line-height:1;font-variant-numeric:tabular-nums}
@@ -124,6 +128,8 @@ a{color:var(--sky)}
 .films li button{width:100%;display:grid;grid-template-columns:4px 36px minmax(0,1fr) auto;gap:12px;align-items:center;text-align:left;background:none;border:0;padding:8px 12px;cursor:pointer}
 .films li button:hover,.films li button.sel{background:var(--paper)}
 .films .bar{align-self:stretch;background:var(--pin)}
+.films .bar.tv{background:var(--sky)}
+.films .bar.tv.ap{background:repeating-linear-gradient(var(--sky) 0 4px,transparent 4px 7px)}
 .films .bar.ap{background:repeating-linear-gradient(var(--pin) 0 4px,transparent 4px 7px)}
 .films .th{width:36px;aspect-ratio:2/3;background:var(--line) center/cover no-repeat;display:block}
 .films b{display:block;font-weight:600;line-height:1.25;overflow-wrap:anywhere}
@@ -131,6 +137,10 @@ a{color:var(--sky)}
 .films .r{text-align:right;font-size:12px;color:var(--sun);white-space:nowrap;letter-spacing:.04em}
 .films .r em{display:block;font-style:normal;font-family:var(--f-mono);font-size:10.5px;color:var(--muted);letter-spacing:.06em}
 .empty{padding:20px;color:var(--muted)}
+.kinds{display:flex;gap:6px;padding:0 20px 8px}
+.kinds button{background:none;border:1px solid var(--line);padding:3px 10px;font-family:var(--f-mono);font-size:11px;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;color:var(--muted)}
+.kinds button[aria-selected="true"]{background:var(--ink);border-color:var(--ink);color:var(--paper)}
+.tag.tv{color:var(--sky)}
 .credit{margin:0;padding:10px 20px 14px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted);flex:none}
 
 /* forms */
@@ -209,6 +219,7 @@ a{color:var(--sky)}
   .profile .who p{display:none}
   .stats b{font-size:22px}
   .listhead{padding:12px 16px 8px}
+  .kinds{padding:0 16px 10px}
   /* the logbook becomes a horizontal strip of posters */
   .films{display:flex;gap:10px;overflow-x:auto;padding:0 16px 16px;scroll-snap-type:x proximity;scroll-padding:0 16px;-webkit-overflow-scrolling:touch}
   .films li{flex:0 0 116px;scroll-snap-align:start}

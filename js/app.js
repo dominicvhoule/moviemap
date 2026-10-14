@@ -191,24 +191,36 @@ function groupFilms(list){
   groups.forEach(g=>{ const p = projection([g.lon,g.lat]); g.x = p[0]; g.y = p[1]; g.ap = g.films.every(f=>f.ap); g.key = g.films.map(MM.filmKey).join("~"); });
   return groups;
 }
+const isSeries = f => MM.isTv(f.tmdb);
+let kind = "all";   // logbook / map filter: all, film, series
 function filtered(){
   const q = ($("#q").value||"").toLowerCase().trim();
-  return q ? viewing.films.filter(f=>[f.t,f.p,f.c,f.d].join(" ").toLowerCase().includes(q)) : viewing.films;
+  let list = viewing.films;
+  if(kind !== "all") list = list.filter(f=>isSeries(f) === (kind === "series"));
+  return q ? list.filter(f=>[f.t,f.p,f.c,f.d].join(" ").toLowerCase().includes(q)) : list;
 }
+document.querySelectorAll(".kinds button").forEach(b=>b.onclick = ()=>{
+  kind = b.dataset.k;
+  document.querySelectorAll(".kinds button").forEach(x=>x.setAttribute("aria-selected", String(x === b)));
+  closeDetail(); renderList();
+});
 function renderPins(){
   if(!projection) return;
   const list = filtered();
   const groups = pinGroups = groupFilms(list);
   const pins = gPins.selectAll("g.pin.film").data(groups, d=>d.key).join(enter=>{
     const g = enter.append("g").attr("class","pin film").attr("tabindex",0).attr("role","button");
-    g.append("circle").attr("class","dot"); g.append("text"); return g;
+    g.append("circle").attr("class","dot"); g.append("rect").attr("class","dot"); g.append("text"); return g;
   });
   pins.classed("approx", d=>d.ap).classed("sel", d=>!!selected && d.films.includes(selected))
     .attr("aria-label", d=>d.films.map(f=>f.t).join(", "))
     .attr("transform", d=>`translate(${d.x},${d.y}) scale(${1/k})`)
     .on("click", (ev,d)=>{ ev.stopPropagation(); openGroup(d); })
     .on("keydown", (ev,d)=>{ if(ev.key==="Enter"||ev.key===" "){ ev.preventDefault(); openGroup(d); } });
-  pins.select("circle").attr("r", d=>d.films.length>1 ? Math.min(16, 9 + Math.log2(d.films.length)*2) : 7);
+  // A lone series gets a square pin; films and mixed groups get a round one.
+  const lone = d => d.films.length === 1 && isSeries(d.films[0]);
+  pins.select("circle").attr("display", d=>lone(d) ? "none" : null).attr("r", d=>d.films.length>1 ? Math.min(16, 9 + Math.log2(d.films.length)*2) : 7);
+  pins.select("rect").attr("display", d=>lone(d) ? null : "none").attr("x",-6.5).attr("y",-6.5).attr("width",13).attr("height",13).attr("rx",2.5);
   pins.select("text").text(d=>d.films.length>1 ? d.films.length : "");
   const visited = new Set(viewing.films.map(f=>MM.geoName(f.c)));
   gLand.selectAll("path.country").classed("visited", d=>visited.has(d.properties.name));
@@ -270,7 +282,7 @@ function openFilm(f, fly){
     <div class="body">
       <div><div class="place">${esc([f.p, f.p!==f.c ? f.c : ""].filter(Boolean).join(", "))}</div><div class="coord">${fmtCoord(f.lat, f.lon)}</div></div>
       ${f.n ? `<p class="note">${esc(f.n)}</p>` : ""}
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${f.r ? `<span class="stars">${stars(f.r)}</span>` : ""}${f.rv ? '<span class="tag">Reviewed</span>' : ""}${f.ap ? '<span class="tag ap">Approx. setting</span>' : ""}${f.watched ? `<span class="tag" style="color:var(--muted)">Watched ${esc(f.watched)}</span>` : ""}</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${f.r ? `<span class="stars">${stars(f.r)}</span>` : ""}${f.rv ? '<span class="tag">Reviewed</span>' : ""}${isSeries(f) ? '<span class="tag tv">Series</span>' : ""}${f.ap ? '<span class="tag ap">Approx. setting</span>' : ""}${f.watched ? `<span class="tag" style="color:var(--muted)">Watched ${esc(f.watched)}</span>` : ""}</div>
       ${mine ? `<div class="cta"><button class="btn ghost small" id="d-move">Move pin</button><button class="btn ghost small" id="d-del">Remove</button></div>` : ""}
       ${f.tmdb ? `<a class="linkbtn" href="${MM.tmdbPage(f.tmdb)}" target="_blank" rel="noopener">${MM.isTv(f.tmdb) ? "Series" : "Film"} page on TMDB ↗</a>` : ""}
     </div>`;
@@ -307,7 +319,9 @@ function setOwnerHeader(){
   $("#ubio").textContent = [o.username ? "@" + o.username : "", o.bio].filter(Boolean).join(" · ");
   const ctry = new Set(viewing.films.map(f=>f.c).filter(Boolean));
   const cont = new Set(viewing.films.map(contOf).filter(Boolean));
-  $("#s-films").textContent = viewing.films.length;
+  const nSeries = viewing.films.filter(isSeries).length;
+  $("#s-films").textContent = viewing.films.length - nSeries;
+  $("#s-series").textContent = nSeries;
   $("#s-ctry").textContent = ctry.size;
   $("#s-cont").textContent = cont.size;
   $("#whose-k").textContent = viewing.mine ? (me ? "Your map" : "Saved in this browser") : o.featured ? "Starter map" : "Member's map";
@@ -322,7 +336,7 @@ function renderList(){
     ul.innerHTML = `<li class="empty">${viewing.films.length ? "No films match that filter." : viewing.mine ? 'No films yet. <a href="#/log">Log a film</a> or <a href="#/import">connect Letterboxd</a>.' : "No films logged yet."}</li>`;
     return;
   }
-  ul.innerHTML = list.map((f,i)=>`<li><button data-i="${i}"><span class="bar ${f.ap?"ap":""}"></span><span class="th" data-i="${i}" data-t="${esc(f.t)}"></span><span style="min-width:0"><b>${esc(f.t)}</b><span class="meta">${esc(f.p || f.c)}${f.c && f.p && f.p!==f.c ? ", " + esc(f.c) : ""}</span></span><span class="r">${stars(f.r)}<em>${esc(f.y)}</em></span></button></li>`).join("");
+  ul.innerHTML = list.map((f,i)=>`<li><button data-i="${i}"><span class="bar ${f.ap?"ap":""} ${isSeries(f)?"tv":""}"></span><span class="th" data-i="${i}" data-t="${esc(f.t)}"></span><span style="min-width:0"><b>${esc(f.t)}</b><span class="meta">${esc(f.p || f.c)}${f.c && f.p && f.p!==f.c ? ", " + esc(f.c) : ""}</span></span><span class="r">${stars(f.r)}<em>${esc(f.y)}</em></span></button></li>`).join("");
   ul.querySelectorAll("button").forEach(b=>b.onclick = ()=>openFilm(list[+b.dataset.i], true));
   listObserver = new IntersectionObserver(entries=>entries.forEach(async en=>{
     if(!en.isIntersecting) return;
@@ -381,6 +395,7 @@ function renderAll(){ setOwnerHeader(); renderPins(); renderList(); renderCTA();
 function showMap(owner, films, mine){
   viewing = {owner, films, mine};
   selected = null; detail.hidden = true; $("#q").value = "";
+  kind = "all"; document.querySelectorAll(".kinds button").forEach(x=>x.setAttribute("aria-selected", String(x.dataset.k === "all")));
   renderAll(); fitPins(true);
 }
 function showMine(){
@@ -400,8 +415,8 @@ let draft = null, draftRating = null, searchT = null, searchSeq = 0;
 function renderLog(){
   showMine_keepView();
   const el = $("#log");
-  el.innerHTML = `<h2 class="h">Log a film</h2>
-    <div class="search"><label for="lq" class="sr">Film title</label><input id="lq" type="search" autocomplete="off" placeholder="Search a title, e.g. Belén"></div>
+  el.innerHTML = `<h2 class="h">Log a film or series</h2>
+    <div class="search"><label for="lq" class="sr">Film title</label><input id="lq" type="search" autocomplete="off" placeholder="Search a film or series, e.g. Belén"></div>
     <p class="hint" id="ls">Start typing and pick the right film. We'll work out where it takes place.</p>
     <ul class="results" id="lr"></ul>
     <div id="lc" hidden></div>
@@ -686,7 +701,7 @@ function renderImport(){
     <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${esc(lb||"")}"><button class="btn" type="submit">${lb ? "Sync now" : "Connect"}</button></form>
     <p class="hint" id="lbs">${lb ? `Linked to <a href="https://letterboxd.com/${esc(lb)}/" target="_blank" rel="noopener">letterboxd.com/${esc(lb)}</a>.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}` : "Your Letterboxd profile needs to be public."}</p>
     ${rep ? `<div class="box">
-      <p class="ok" style="margin:0"><b>${rep.total} film${rep.total===1?"":"s"}</b> on your Letterboxd${missing.length ? `, <b>${missing.length}</b> still need${missing.length===1?"s":""} a pin` : ", all on your map"}.</p>
+      <p class="ok" style="margin:0"><b>${rep.total} title${rep.total===1?"":"s"}</b> on your Letterboxd${missing.length ? `, <b>${missing.length}</b> still need${missing.length===1?"s":""} a pin` : ", all on your map"}.</p>
       ${missing.length ? `<p class="hint">We couldn't work out where ${missing.length===1 ? "this one takes" : "these take"} place. Tap Place it to pin ${missing.length===1 ? "it" : "each one"} yourself.</p>
       <ul class="results">${missing.map((m,i)=>`<li><button data-i="${i}"><span class="th" ${m.poster ? `style="background-image:url('${MM.poster(m.poster,"w92")}')"` : ""}></span><span style="min-width:0"><b>${esc(m.t)} <span class="m">${esc(m.y)}</span></b><span class="m" style="color:var(--rust)">Place it →</span></span></button></li>`).join("")}</ul>` : ""}
     </div>` : ""}
