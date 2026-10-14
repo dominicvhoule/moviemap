@@ -360,7 +360,7 @@ async function renderCTA(){
   ov.hidden = true; cta.innerHTML = "";
   const o = viewing.owner || {};
   if(viewing.mine){
-    cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a>${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
+    cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a><a class="btn ghost" href="#/poster">Poster</a>${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
     const sh = $("#share"); if(sh) sh.onclick = ()=>shareLink(profileURL(me.username), "My MovieMap");
     return;
   }
@@ -389,6 +389,7 @@ async function renderCTA(){
     };
     cta.prepend(b);
   }
+  if(viewing.films.length){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "#/poster"; a.textContent = "Poster"; cta.append(a); }
   if(o.letterboxd){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "https://letterboxd.com/" + encodeURIComponent(o.letterboxd) + "/"; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Letterboxd ↗"; cta.append(a); }
 }
 function renderAll(){ setOwnerHeader(); renderPins(); renderList(); renderCTA(); }
@@ -406,7 +407,7 @@ function showMine(){
 
 /* ================= rail views ================= */
 function showPanel(id){
-  ["map","explore","log","import","account"].forEach(v=>$("#view-"+v).hidden = v !== id);
+  ["map","explore","log","import","account","poster"].forEach(v=>$("#view-"+v).hidden = v !== id);
 }
 function setNav(name){ document.querySelectorAll(".nav a, .acct").forEach(a=>a.setAttribute("aria-current", a.dataset.nav === name ? "page" : "false")); }
 function paintAccountLink(){ $("#acct-link").textContent = me ? "@" + me.username : (sb ? "Sign in" : "Account"); }
@@ -732,6 +733,91 @@ function renderImport(){
   };
 }
 
+/* ---------- poster ---------- */
+let posterOpts = Object.assign({theme:"paper", size:"18x24", showKey:true}, MM.lsGet("mm-poster", {}));
+let posterCanvas = null, posterURL = null, posterSeq = 0;
+function posterTitle(){
+  const o = viewing.owner || {};
+  const name = viewing.mine ? (me ? (me.display_name || me.username) : "My") : (o.display_name || o.name || o.username || "My");
+  return name === "My" ? "My MovieMap" : `${name}'s MovieMap`;
+}
+function posterSubtitle(){
+  const films = viewing.films, nS = films.filter(isSeries).length, nF = films.length - nS;
+  const ctry = new Set(films.map(f=>f.c).filter(Boolean)).size, cont = new Set(films.map(contOf).filter(Boolean)).size;
+  return [`${nF} film${nF===1?"":"s"}`, nS ? `${nS} series` : "", `${ctry} countr${ctry===1?"y":"ies"}`, cont ? `${cont} continent${cont===1?"":"s"}` : ""].filter(Boolean).join("  ·  ");
+}
+function renderPoster(){
+  const el = $("#poster");
+  if(!viewing.films.length){ el.innerHTML = `<h2 class="h">Poster</h2><p class="hint">There are no films on this map yet. Log a few first, then come back for a poster.</p>`; return; }
+  const seg = (name, items) => `<div class="seg" role="group" aria-label="${name}">${items}</div>`;
+  el.innerHTML = `<h2 class="h">Poster</h2>
+    <p class="hint">${esc(posterTitle())}, ready to print. Every place gets a number, with a key underneath.</p>
+    <div class="pv busy" id="pv">Drawing your poster…</div>
+    <div class="opts">
+      <div class="field">Style${seg("Style", Object.entries(MM.POSTER_THEMES).map(([k,t])=>`<button type="button" data-theme="${k}" aria-pressed="${posterOpts.theme===k}"><i style="background:${t.bg};box-shadow:inset -8px 0 0 ${t.pin}"></i>${t.label}</button>`).join(""))}</div>
+      <label class="field" for="ps">Size<select id="ps">${Object.entries(MM.POSTER_SIZES).map(([k,s])=>`<option value="${k}" ${posterOpts.size===k?"selected":""}>${s.label}</option>`).join("")}</select></label>
+      <label class="check" for="pk"><input type="checkbox" id="pk" ${posterOpts.showKey?"checked":""}> Include the key of places and titles</label>
+      <div class="cta"><button class="btn" id="pdf">Download PDF</button><button class="btn ghost" id="png">Download PNG</button></div>
+      <p class="hint">The PDF is sized for printing at the size you pick, at 200 dpi. Any print shop, or an online service like Printful or Mpix, can print it. For a home printer, choose A3.</p>
+    </div>`;
+  el.querySelectorAll("[data-theme]").forEach(b=>b.onclick = ()=>{ posterOpts.theme = b.dataset.theme; el.querySelectorAll("[data-theme]").forEach(x=>x.setAttribute("aria-pressed", String(x===b))); drawPoster(); });
+  $("#ps").onchange = e=>{ posterOpts.size = e.target.value; drawPoster(); };
+  $("#pk").onchange = e=>{ posterOpts.showKey = e.target.checked; drawPoster(); };
+  $("#png").onclick = ()=>downloadPoster("png");
+  $("#pdf").onclick = ()=>downloadPoster("pdf");
+  drawPoster();
+}
+async function drawPoster(){
+  const seq = ++posterSeq;
+  MM.lsSet("mm-poster", posterOpts);
+  await MM.posterFontsReady();
+  if(seq !== posterSeq) return;
+  posterCanvas = MM.renderPoster({
+    title: posterTitle(), subtitle: posterSubtitle(), films: viewing.films, countries,
+    theme: posterOpts.theme, size: posterOpts.size, showKey: posterOpts.showKey,
+    isSeries, geoName: MM.geoName, url: siteURL().replace(/^https?:\/\//, "").replace(/\/$/, "")
+  });
+  const blob = await new Promise(r=>posterCanvas.toBlob(r, "image/jpeg", 0.85));
+  if(seq !== posterSeq || !blob) return;
+  if(posterURL) URL.revokeObjectURL(posterURL);
+  posterURL = URL.createObjectURL(blob);
+  const pv = $("#pv"); if(!pv) return;
+  pv.classList.remove("busy");
+  pv.innerHTML = `<img src="${posterURL}" alt="Poster preview of ${esc(posterTitle())}">`;
+}
+let jsPDFLoad = null;
+function loadJsPDF(){
+  if(window.jspdf) return Promise.resolve();
+  return jsPDFLoad = jsPDFLoad || new Promise((res, rej)=>{
+    const s = document.createElement("script");
+    s.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js";
+    s.onload = res; s.onerror = ()=>{ jsPDFLoad = null; rej(new Error("load")); };
+    document.head.append(s);
+  });
+}
+async function downloadPoster(kind){
+  if(!posterCanvas) return;
+  const name = "moviemap-" + (MM.norm(posterTitle().replace(/'s MovieMap$|MovieMap$/i,"")) || "poster");
+  const btn = $(kind === "pdf" ? "#pdf" : "#png"); btn.disabled = true;
+  try{
+    let blob;
+    if(kind === "png") blob = await new Promise(r=>posterCanvas.toBlob(r, "image/png"));
+    else {
+      await loadJsPDF();
+      const S = MM.POSTER_SIZES[posterOpts.size];
+      const doc = new window.jspdf.jsPDF(Object.assign({orientation:"portrait"}, S.pdf));
+      const pw = doc.internal.pageSize.getWidth(), ph = doc.internal.pageSize.getHeight();
+      doc.addImage(posterCanvas.toDataURL("image/jpeg", 0.93), "JPEG", 0, 0, pw, ph);
+      blob = doc.output("blob");
+    }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob); a.download = `${name}.${kind}`;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 4000);
+  }catch(e){ toast("The download didn't work. Check your connection and try again."); }
+  finally{ btn.disabled = false; }
+}
+
 /* ---------- people ---------- */
 async function renderExplore(){
   const el = $("#explore");
@@ -905,6 +991,7 @@ async function route(){
   if(a === "explore"){ setNav("explore"); showPanel("explore"); if(!viewing.owner) showFeaturedOrMine(); return renderExplore(); }
   if(a === "log"){ setNav("log"); showPanel("log"); return renderLog(); }
   if(a === "import"){ setNav("import"); showPanel("import"); return renderImport(); }
+  if(a === "poster"){ setNav(""); showPanel("poster"); if(!viewing.owner) showFeaturedOrMine(); return renderPoster(); }
   if(a === "account"){ setNav("account"); showPanel("account"); if(!viewing.owner) showFeaturedOrMine(); return renderAccount(); }
   setNav("home"); showPanel("map"); showFeaturedOrMine();
 }
