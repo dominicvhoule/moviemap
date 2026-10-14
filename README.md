@@ -18,7 +18,8 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 |---|---|
 | Titles, years, directors, posters | [TMDB](https://www.themoviedb.org/) API (key in `config.js`) |
 | Where a film takes place | [Wikidata](https://www.wikidata.org/) "narrative location" (P840) |
-| Fallback when Wikidata has no setting | The film's country of origin (Wikidata, then TMDB), marked approximate |
+| When Wikidata has no setting | Claude reads the Wikipedia plot and TMDB description (`film-setting` function) |
+| Last resort | The film's country of origin (TMDB, then Wikidata), marked approximate |
 | Accounts, maps, follows | [Supabase](https://supabase.com/) (optional, see below) |
 
 Resolved settings are cached in a shared `film_settings` table so each film is only looked up once.
@@ -31,6 +32,8 @@ Without this step the site still works, but films save only in each visitor's br
 2. **SQL Editor → New query**: paste all of `supabase/schema.sql` and press **Run**.
 3. **Authentication → URL Configuration**: set **Site URL** to `https://dominicvhoule.github.io/moviemap/` and add the same URL under **Redirect URLs**.
 4. **Project Settings → API**: copy the **Project URL** and the **anon public** key into `config.js`.
+
+6. **AI settings**: run `supabase/migrations/002_ai_settings.sql` in the SQL Editor. Create an API key at [console.anthropic.com](https://console.anthropic.com/) (add a payment method; it costs well under a cent per title). In **Edge Functions → Secrets**, add `ANTHROPIC_API_KEY`. Then deploy `supabase/functions/film-setting/index.ts` as a new function named `film-setting`, with "Verify JWT" on.
 
 5. **Letterboxd sync**: **Edge Functions → Deploy a new function → Via editor**. Name it `letterboxd-feed`, replace the sample code with `supabase/functions/letterboxd-feed/index.ts`, and press **Deploy**. Leave "Verify JWT" on, so only signed-in members can use it.
 
@@ -48,12 +51,14 @@ js/app.js           map, logbook, logging, import, accounts, people
 data/world.json     country shapes (Natural Earth via world-atlas)
 supabase/schema.sql database tables and access rules
 supabase/functions/letterboxd-feed/index.ts  reads public Letterboxd profiles (diary feed, Films pages, film pages)
+supabase/functions/film-setting/index.ts     asks Claude where a title is set, from its Wikipedia plot
+supabase/migrations/                         database changes to run after the first setup
 ```
 
 ## Limits
 
 - **Letterboxd**: there's no sign-in yet (Letterboxd's API is invitation-only). Sync reads public profile pages, so it only works for public profiles and can break if Letterboxd changes its page layout. Reading pages this way may not be allowed under Letterboxd's terms; switch to the official API once access is granted.
 - **Contacts on iPhone**: Safari doesn't let websites read contacts. iPhone users can share an invite link or search by username instead.
-- **Wikidata coverage**: very new or obscure films often have no setting recorded yet, so they fall back to an approximate country pin.
+- **Settings**: Wikidata has gaps for new and small films; those go to the AI step, which can be wrong for titles with little written about them. Move pin always wins, and moved pins are never overwritten.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.

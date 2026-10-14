@@ -54,9 +54,10 @@ if(sb){
     }
     return got;
   };
+  MM.aiSetting = null;   // switched on after sign-in, once the function answers
   MM.saveRemoteSettings = async map => {
     if(!session) return;
-    const rows = Object.keys(map).filter(id=>["wikidata","production"].includes(map[id].src)).map(id=>{ const s = map[id]; return {tmdb_id:+id, place:s.p, country:s.c, continent:s.cont||null, lat:s.lat, lon:s.lon, approx:!!s.ap, note:s.n||null, source:s.src}; });
+    const rows = Object.keys(map).filter(id=>["wikidata","production"].includes(map[id].src) && !map[id].aiTried).map(id=>{ const s = map[id]; return {tmdb_id:+id, place:s.p, country:s.c, continent:s.cont||null, lat:s.lat, lon:s.lon, approx:!!s.ap, note:s.n||null, source:s.src}; });
     for(let i=0; i<rows.length; i+=200) await sb.from("film_settings").upsert(rows.slice(i, i+200), {onConflict:"tmdb_id", ignoreDuplicates:true});
   };
 }
@@ -655,7 +656,7 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
   }finally{ syncing = false; }
 }
 // Re-check pins that were only country guesses (or have a hand-checked setting now). Pins you moved yourself are left alone.
-const FIX_VERSION = "mm-fix-v2:";
+const FIX_VERSION = "mm-fix-v3:";
 async function refreshSettings(force){
   if(!cloud()) return;
   const flag = FIX_VERSION + me.id;
@@ -674,7 +675,8 @@ async function refreshSettings(force){
     if(Math.abs(s.lat - f.lat) < 0.01 && Math.abs(s.lon - f.lon) < 0.01) continue;
     try{ await Store.update(f, {p:s.p, c:s.c, cont:s.cont||"", lat:s.lat, lon:s.lon, ap:s.ap, n:s.n||"", src:s.src}); changed++; }catch(e){}
   }
-  MM.lsSet(flag, true);
+  // Keep re-checking on later visits until the AI step is available, so guesses get upgraded once it's switched on.
+  if(aiState === "on" || !MM.aiSetting) MM.lsSet(flag, true);
   if(changed && viewing.mine){ renderAll(); fitPins(true); toast(`Moved ${changed} pin${changed===1?"":"s"} to a better spot`); }
 }
 function maybeAutoSync(){
@@ -926,9 +928,19 @@ async function moveLocalFilms(){
   if(!local.length || !cloud()) return;
   try{ const {added} = await Store.add(local); MM.lsSet(LOCAL, []); if(added) toast(`Moved ${added} film${added===1?"":"s"} to your account`); }catch(e){}
 }
+let aiState = "unknown";   // unknown | on | off
+async function aiFor(d){
+  if(aiState === "off" || !cloud()) return null;
+  const {data, error} = await sb.functions.invoke("film-setting", {body:{tmdb:d.tmdb, title:d.t, year:d.y || null, qid:d.qid || null, overview:d.ov || "", tv:MM.isTv(d.tmdb)}});
+  if(error){ if(error.context && error.context.status === 404) aiState = "off"; return null; }   // function not deployed
+  if(data && data.reason === "no_api_key"){ aiState = "off"; return null; }
+  aiState = "on";
+  return data && data.setting || null;
+}
 async function onAuth(newSession, event){
   session = newSession;
   await loadMe();
+  MM.aiSetting = (sb && newSession) ? aiFor : null;
   if(cloud()) await moveLocalFilms();
   await reloadMine();
   paintAccountLink();

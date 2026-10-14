@@ -93,7 +93,7 @@ create table if not exists public.film_settings (
   lon        double precision not null check (lon between -180 and 180),
   approx     boolean not null default false,
   note       text check (char_length(note) <= 500),
-  source     text check (source in ('wikidata','production')),
+  source     text check (source in ('wikidata','production','ai')),
   updated_at timestamptz not null default now()
 );
 alter table public.film_settings enable row level security;

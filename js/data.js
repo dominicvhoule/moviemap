@@ -126,7 +126,7 @@ MM.matchFilm = async function(title, year){
 // Full details for one TMDB id: director, Wikidata id, production countries.
 MM.filmDetails = async function(id){
   id = +id; if(!id) return null;
-  const cacheKey = "mm-tmdb3:" + id;
+  const cacheKey = "mm-tmdb4:" + id;
   const hit = lsGet(cacheKey, null); if(hit) return hit;
   const tv = MM.isTv(id);
   const d = await tmdb((tv ? "/tv/" : "/movie/") + Math.abs(id), {append_to_response:"external_ids,credits"});
@@ -135,7 +135,7 @@ MM.filmDetails = async function(id){
   const date = tv ? d.first_air_date : d.release_date;
   const out = {
     tmdb:tv ? -d.id : d.id, tv, t:tv ? d.name : d.title, ot:tv ? d.original_name : d.original_title, y:date ? +date.slice(0,4) : "",
-    d:dirs.slice(0,3).join(", "), poster:d.poster_path || null,
+    d:dirs.slice(0,3).join(", "), poster:d.poster_path || null, ov:(d.overview || "").slice(0, 1200),
     qid:(d.external_ids && d.external_ids.wikidata_id) || null,
     pc:(d.production_countries||[]).map(c=>c.name),
     iso:[...(d.origin_country||[]), ...(d.production_countries||[]).map(c=>c.iso_3166_1)].filter(Boolean)
@@ -276,21 +276,36 @@ MM.curated = function(det, entryTitle){
 MM.resolveSettings = async function(dets, onStep, titles){
   const curated = new Map();
   dets.forEach((d,i)=>{ if(!d) return; const c = MM.curated(d, titles && titles[i]); if(c) curated.set(d.tmdb, c); });
-  const need = dets.filter(d=>d && !curated.has(d.tmdb) && !MM.settingCache.get(d.tmdb));
+  const weakCached = s => s && s.src === "production" && MM.aiSetting && !s.aiTried;
+  const need = dets.filter(d=>d && !curated.has(d.tmdb) && (!MM.settingCache.get(d.tmdb) || weakCached(MM.settingCache.get(d.tmdb))));
   if(MM.remoteSettings && need.length){
     // Only trust shared entries that came from a recorded setting; country fallbacks get re-checked.
-    try{ const got = await MM.remoteSettings(need.map(d=>d.tmdb)); Object.keys(got).forEach(id=>{ if(got[id].src === "wikidata") MM.settingCache.put(id, got[id]); }); }catch(e){}
+    try{ const got = await MM.remoteSettings(need.map(d=>d.tmdb)); Object.keys(got).forEach(id=>{ if(got[id].src === "wikidata" || got[id].src === "ai") MM.settingCache.put(id, got[id]); }); }catch(e){}
   }
-  const still = need.filter(d=>!MM.settingCache.get(d.tmdb));
+  const still = need.filter(d=>!MM.settingCache.get(d.tmdb) || weakCached(MM.settingCache.get(d.tmdb)));
   const wd = await MM.wikidataSettings(still.map(d=>d.qid));
   const fresh = {};
+  // 1) a setting recorded on Wikidata
+  const noRecord = [];
   still.forEach(d=>{
     const w = d.qid && wd[d.qid];
-    const s = (w && !w.weak ? w : null) || MM.fallbackSetting(d) || w;
-    if(s){ MM.settingCache.put(d.tmdb, s); fresh[d.tmdb] = s; }
+    if(w && !w.weak){ MM.settingCache.put(d.tmdb, w); fresh[d.tmdb] = w; }
+    else noRecord.push(d);
+  });
+  // 2) AI reads the plot  3) otherwise the film's country
+  let done = 0;
+  await MM.pool(noRecord, 2, async d=>{
+    let s = null;
+    if(MM.aiSetting){ try{ s = await MM.aiSetting(d); }catch(e){} }
+    if(!s){
+      const w = d.qid && wd[d.qid];
+      s = MM.fallbackSetting(d) || w || null;
+      if(s && MM.aiSetting) s = Object.assign({}, s, {aiTried:1});
+    }
+    if(s){ MM.settingCache.put(d.tmdb, s); if(s.src !== "ai") fresh[d.tmdb] = s; }
+    done++; if(onStep) onStep(done, noRecord.length);
   });
   if(MM.saveRemoteSettings && Object.keys(fresh).length){ try{ await MM.saveRemoteSettings(fresh); }catch(e){} }
-  if(onStep) onStep(dets.length, dets.length);
   return dets.map(d=>d ? (curated.get(d.tmdb) || MM.settingCache.get(d.tmdb)) : null);
 };
 
