@@ -8,7 +8,7 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 
 - **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings).
 - **Log a film**: search a title, pick the right match, and MovieMap finds the setting and poster. Move the pin if it's wrong.
-- **Letterboxd**: drop your Letterboxd export (.zip) to bring in your whole watched history with ratings. Export again later to add only new films.
+- **Letterboxd**: connect your Letterboxd username and new diary entries are added automatically (checked when you open the site, at most every 6 hours). Drop your Letterboxd export (.zip) once to bring in your full watched history with ratings.
 - **People**: search members by username, follow them, view their maps, find friends from your phone's contacts (Android Chrome), or share an invite link.
 - **Phone layout**: wide map on top, posters in a swipeable strip below.
 
@@ -32,6 +32,8 @@ Without this step the site still works, but films save only in each visitor's br
 3. **Authentication → URL Configuration**: set **Site URL** to `https://dominicvhoule.github.io/moviemap/` and add the same URL under **Redirect URLs**.
 4. **Project Settings → API**: copy the **Project URL** and the **anon public** key into `config.js`.
 
+5. **Letterboxd sync**: **Edge Functions → Deploy a new function → Via editor**. Name it `letterboxd-feed`, replace the sample code with `supabase/functions/letterboxd-feed/index.ts`, and press **Deploy**. Leave "Verify JWT" on, so only signed-in members can use it.
+
 The anon key is meant to be public. Row-level security in `schema.sql` lets anyone read maps and profiles, and lets people change only their own.
 
 ## Files
@@ -45,11 +47,12 @@ js/data.js          TMDB, Wikidata, Letterboxd export parsing
 js/app.js           map, logbook, logging, import, accounts, people
 data/world.json     country shapes (Natural Earth via world-atlas)
 supabase/schema.sql database tables and access rules
+supabase/functions/letterboxd-feed/index.ts  reads a public Letterboxd diary feed
 ```
 
 ## Limits
 
-- **Letterboxd sign-in**: Letterboxd doesn't offer sign-in or an open API to other sites, so syncing works through the export file.
+- **Letterboxd**: there's no sign-in yet (Letterboxd's API is invitation-only). Username sync reads the public diary feed, which covers only diary entries, about the last 50, and only for public profiles. The export file covers full history.
 - **Contacts on iPhone**: Safari doesn't let websites read contacts. iPhone users can share an invite link or search by username instead.
 - **Wikidata coverage**: very new or obscure films often have no setting recorded yet, so they fall back to an approximate country pin.
 
