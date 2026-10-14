@@ -271,7 +271,7 @@ function renderList(){
   const list = filtered();
   listObserver && listObserver.disconnect();
   if(!list.length){
-    ul.innerHTML = `<li class="empty">${viewing.films.length ? "No films match that filter." : viewing.mine ? 'No films yet. <a href="#/log">Log a film</a> or <a href="#/import">bring in your Letterboxd history</a>.' : "No films logged yet."}</li>`;
+    ul.innerHTML = `<li class="empty">${viewing.films.length ? "No films match that filter." : viewing.mine ? 'No films yet. <a href="#/log">Log a film</a> or <a href="#/import">connect Letterboxd</a>.' : "No films logged yet."}</li>`;
     return;
   }
   ul.innerHTML = list.map((f,i)=>`<li><button data-i="${i}"><span class="bar ${f.ap?"ap":""}"></span><span class="th" data-i="${i}" data-t="${esc(f.t)}"></span><span style="min-width:0"><b>${esc(f.t)}</b><span class="meta">${esc(f.p || f.c)}${f.c && f.p && f.p!==f.c ? ", " + esc(f.c) : ""}</span></span><span class="r">${stars(f.r)}<em>${esc(f.y)}</em></span></button></li>`).join("");
@@ -361,6 +361,7 @@ function renderLog(){
   const q = $("#lq");
   q.addEventListener("input", ()=>{ clearTimeout(searchT); searchT = setTimeout(()=>runSearch(q.value.trim()), 280); });
   q.focus({preventScroll:true});
+  if(pendingLog){ const p = pendingLog; pendingLog = null; q.value = p.t; chooseFilm({tmdb:p.tmdb, t:p.t}); }
 }
 async function runSearch(text){
   const seq = ++searchSeq, st = $("#ls"), ul = $("#lr");
@@ -393,7 +394,7 @@ async function chooseFilm(m){
     draft = Object.assign({t:det.t, y:det.y, d:det.d, tmdb:det.tmdb, poster:det.poster}, s || {p:"", c:"", lat:NaN, lon:NaN, ap:1, n:"", src:""});
     draft.watched = new Date().toISOString().slice(0,10);
     draftRating = null;
-    st.textContent = s ? "Check the setting, rate it, then pin it." : "We couldn't find where this one is set. Tap Place pin, then tap the map.";
+    st.textContent = s ? "Check the setting, rate it, then pin it." : "We couldn't find where this one is set. Tap Place pin on the map, then tap where it takes place.";
     renderConfirm();
     if(isFinite(draft.lat)){ preview = {lat:draft.lat, lon:draft.lon}; renderPins(); flyTo(draft); }
   }catch(e){
@@ -446,12 +447,13 @@ function renderRate(){
 }
 function showMine_keepView(){ if(!viewing.mine) showMine(); }
 
-/* ---------- Letterboxd: export file + username feed ---------- */
-let importing = false;
+/* ---------- Letterboxd: username feed ---------- */
 const LB_SYNC_EVERY = 6*60*60*1000;   // check the feed at most every 6 hours per browser
 const lbSyncKey = () => "mm-lb-sync:" + (me ? me.id : "");
+const lbReportKey = () => "mm-lb-report:" + (me ? me.id : "");
+let pendingLog = null;   // a skipped Letterboxd film waiting to be pinned by hand
 
-// Turn Letterboxd entries ({t, y, r, rv, watched, tmdb?}) into map-ready films.
+// Turn Letterboxd feed entries ({t, y, r, watched, tmdb}) into map-ready films.
 async function placeEntries(entries, progress){
   let done = 0;
   const dets = await MM.pool(entries, 6, async e=>{
@@ -469,7 +471,7 @@ async function placeEntries(entries, progress){
     const d = dets[i];
     if(!d){ unmatched.push(e); return; }
     const s = setBy.get(d.tmdb);
-    if(!s){ unplaced.push(e); return; }
+    if(!s){ unplaced.push(Object.assign({}, e, {tmdb:d.tmdb, poster:d.poster})); return; }
     ready.push(Object.assign({t:e.t, y:e.y || d.y, d:d.d, tmdb:d.tmdb, poster:d.poster, r:e.r || null, rv:e.rv ? 1 : 0, watched:/^\d{4}-\d{2}-\d{2}$/.test(e.watched||"") ? e.watched : ""}, s));
   });
   return {ready, unmatched, unplaced};
@@ -506,14 +508,23 @@ async function syncLetterboxd(quiet){
     const have = myKeys(), haveIds = new Set(myFilms.map(f=>f.tmdb).filter(Boolean));
     const seen = new Set();
     const todo = feed.filter(e=>{ const k = e.tmdb || MM.filmKey(e); if(seen.has(k)) return false; seen.add(k); return !haveIds.has(e.tmdb) && !have.has(MM.filmKey(e)); });
-    let added = 0;
+    let added = 0, missed = [];
     if(todo.length){
-      const {ready} = await placeEntries(todo);
+      const {ready, unmatched, unplaced} = await placeEntries(todo);
       added = (await Store.add(ready)).added;
       await reloadMine();
+      missed = [...unmatched, ...unplaced];
     }
+    // Keep earlier skipped films that are still missing, so the list survives later syncs.
+    const prev = (MM.lsGet(lbReportKey(), null) || {missed:[]}).missed;
+    const nowIds = new Set(myFilms.map(f=>f.tmdb).filter(Boolean)), nowKeys = myKeys();
+    const byId = new Map();
+    [...prev, ...missed].forEach(m=>{ if(!(m.tmdb && nowIds.has(m.tmdb)) && !nowKeys.has(MM.filmKey(m))) byId.set(m.tmdb || MM.filmKey(m), {t:m.t, y:m.y, tmdb:m.tmdb, poster:m.poster||null}); });
+    MM.lsSet(lbReportKey(), {feed:seen.size, missed:[...byId.values()]});
     MM.lsSet(lbSyncKey(), Date.now());
-    if(added){ toast(`Added ${added} film${added===1?"":"s"} from Letterboxd`); if(viewing.mine){ viewing.films = myFilms; renderAll(); fitPins(true); } }
+    if(added && viewing.mine){ viewing.films = myFilms; renderAll(); fitPins(true); }
+    if(byId.size && (added || !quiet)) toast(`${added ? `Added ${added} from Letterboxd. ` : ""}${byId.size} need${byId.size===1?"s":""} a pin: see the Letterboxd tab`);
+    else if(added) toast(`Added ${added} film${added===1?"":"s"} from Letterboxd`);
     else if(!quiet) toast("You're up to date with Letterboxd");
     return {added, seen:feed.length};
   }catch(e){
@@ -532,33 +543,22 @@ function renderImport(){
   const el = $("#import");
   const lb = me && me.letterboxd;
   const last = cloud() ? MM.lsGet(lbSyncKey(), 0) : 0;
+  const rep = cloud() ? MM.lsGet(lbReportKey(), null) : null;
+  const onMap = new Set(myFilms.map(f=>f.tmdb).filter(Boolean)), mk = myKeys();
+  const missing = rep ? rep.missed.filter(m=>!(m.tmdb && onMap.has(m.tmdb)) && !mk.has(MM.filmKey(m))) : [];
   el.innerHTML = `<h2 class="h">Letterboxd</h2>
-    <div class="box">
-      <b class="sub" style="font-size:17px">Keep in sync</b>
-      <p class="hint">Enter your Letterboxd username and new diary entries show up on your map automatically. It reads your public diary, so there's no password involved.</p>
-      ${cloud() ? `
-      <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${esc(lb||"")}"><button class="btn" type="submit">${lb ? "Sync now" : "Connect"}</button></form>
-      <p class="hint" id="lbs">${lb ? `Linked to <a href="https://letterboxd.com/${esc(lb)}/" target="_blank" rel="noopener">letterboxd.com/${esc(lb)}</a>.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}` : "Your profile needs to be public."}</p>
-      <p class="hint">This picks up films you log in your diary, up to your last 50 entries. For your full history, use the export below once.</p>`
-      : `<p class="notice"><a href="#/account">Sign in</a> to connect your Letterboxd username.</p>`}
-    </div>
-    <div class="box">
-      <b class="sub" style="font-size:17px">Bring in your full history</b>
-      <ol class="steps">
-        <li>Open <a href="https://letterboxd.com/settings/data/" target="_blank" rel="noopener">Letterboxd → Settings → Data</a> and choose <b>Export your data</b>.</li>
-        <li>Drop the .zip file it downloads here. No need to unzip it.</li>
-      </ol>
-      <label class="drop" id="drop" for="lbfile"><b>Choose your Letterboxd .zip</b><br>or drag it here</label>
-      <input type="file" id="lbfile" accept=".zip,.csv,application/zip,text/csv" multiple hidden>
-      <div id="imp" hidden></div>
-      <p class="hint">Brings in every film you've marked watched, with your ratings. Films already on your map are skipped.</p>
-    </div>
-    ${!cloud() ? `<p class="notice">${sb ? '<a href="#/account">Sign in</a> first to save imported films to your account. Otherwise they stay in this browser.' : "Imported films save in this browser."}</p>` : ""}`;
-  const input = $("#lbfile"), drop = $("#drop");
-  input.onchange = ()=>{ if(input.files.length) runImport([...input.files]); };
-  ["dragenter","dragover"].forEach(t=>drop.addEventListener(t, e=>{ e.preventDefault(); drop.classList.add("over"); }));
-  ["dragleave","drop"].forEach(t=>drop.addEventListener(t, e=>{ e.preventDefault(); drop.classList.remove("over"); }));
-  drop.addEventListener("drop", e=>{ const fs = [...(e.dataTransfer.files||[])]; if(fs.length) runImport(fs); });
+    <p class="hint">Connect your Letterboxd username and the films in your diary show up on your map. New entries are added automatically when you open MovieMap. It reads your public diary, so there's no password involved.</p>
+    ${cloud() ? `
+    <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${esc(lb||"")}"><button class="btn" type="submit">${lb ? "Sync now" : "Connect"}</button></form>
+    <p class="hint" id="lbs">${lb ? `Linked to <a href="https://letterboxd.com/${esc(lb)}/" target="_blank" rel="noopener">letterboxd.com/${esc(lb)}</a>.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}` : "Your Letterboxd profile needs to be public."}</p>
+    ${rep ? `<div class="box">
+      <p class="ok" style="margin:0"><b>${rep.feed} film${rep.feed===1?"":"s"}</b> in your Letterboxd diary${missing.length ? `, <b>${missing.length}</b> still need${missing.length===1?"s":""} a pin` : ", all on your map"}.</p>
+      ${missing.length ? `<p class="hint">We couldn't work out where ${missing.length===1 ? "this one takes" : "these take"} place. Tap Place it to pin ${missing.length===1 ? "it" : "each one"} yourself.</p>
+      <ul class="results">${missing.map((m,i)=>`<li><button data-i="${i}"><span class="th" ${m.poster ? `style="background-image:url('${MM.poster(m.poster,"w92")}')"` : ""}></span><span style="min-width:0"><b>${esc(m.t)} <span class="m">${esc(m.y)}</span></b><span class="m" style="color:var(--rust)">Place it →</span></span></button></li>`).join("")}</ul>` : ""}
+    </div>` : ""}
+    <div class="notice"><b>Missing a film?</b> Only films you log in your Letterboxd <b>diary</b> come through, and only your 50 most recent entries. Films you marked as watched without a diary entry, or older entries past those 50, won't appear. Add those with <a href="#/log">Log a film</a>.</div>`
+    : `<p class="notice">${sb ? '<a href="#/account">Sign in</a> to connect your Letterboxd username.' : "Accounts aren't switched on for this site yet."}</p>`}`;
+  el.querySelectorAll(".results button").forEach(b=>b.onclick = ()=>{ pendingLog = missing[+b.dataset.i]; location.hash = "#/log"; });
   const f = $("#lbf");
   if(f) f.onsubmit = async ev=>{
     ev.preventDefault();
@@ -579,36 +579,6 @@ function renderImport(){
       else { s.classList.remove("busy"); s.textContent = (r && LB_ERRORS[r.error]) || "Sync didn't go through. Try again."; }
     }finally{ btn.disabled = false; }
   };
-}
-async function runImport(files){
-  if(importing) return; importing = true;
-  const box = $("#imp"); box.hidden = false;
-  box.innerHTML = `<div class="box" style="background:var(--card)"><p class="hint busy" id="ip-t">Reading your export…</p><div class="progress"><i id="ip-b"></i></div><p class="hint" id="ip-n"></p></div>`;
-  const T = s=>$("#ip-t") && ($("#ip-t").textContent = s), B = p=>$("#ip-b") && ($("#ip-b").style.width = Math.round(p*100) + "%"), N = s=>$("#ip-n") && ($("#ip-n").textContent = s);
-  try{
-    const entries = await MM.readLetterboxd(files);
-    if(!entries.length){ box.innerHTML = `<p class="err">That file doesn't look like a Letterboxd export. Choose the .zip from Settings → Data → Export your data.</p>`; return; }
-    await reloadMine();
-    const have = myKeys();
-    const todo = entries.filter(e=>!have.has(MM.filmKey(e)));
-    const skipped = entries.length - todo.length;
-    if(!todo.length){ box.innerHTML = `<p class="ok">All ${entries.length} films from your export are already on your map.</p>`; return; }
-    T(`Matching ${todo.length} films…`);
-    const {ready, unmatched, unplaced} = await placeEntries(todo, (d,n)=>{ B(d/n*0.8); N(`${d} of ${n}`); if(d===n){ T("Finding where each film takes place…"); N(""); } });
-    B(0.92); T("Saving to your map…");
-    const {added} = await Store.add(ready);
-    B(1);
-    await reloadMine();
-    const approx = ready.filter(f=>f.ap).length;
-    const missed = [...unmatched, ...unplaced];
-    box.innerHTML = `<div class="box" style="background:var(--card)">
-      <p class="ok"><b>Added ${added} film${added===1?"":"s"}</b> to your map.${skipped ? ` ${skipped} were already there.` : ""}</p>
-      ${approx ? `<p class="hint">${approx} are pinned approximately (dashed pins) because no exact setting is on record. Open one and tap Move pin to fix it.</p>` : ""}
-      ${missed.length ? `<details><summary class="hint">${missed.length} couldn't be placed</summary><p class="hint">${missed.slice(0,60).map(e=>esc(e.t) + (e.y ? " (" + esc(e.y) + ")" : "")).join(", ")}${missed.length > 60 ? "…" : ""}</p><p class="hint">Log these by hand from Log a film.</p></details>` : ""}
-      <a class="btn" href="#/">See your map</a></div>`;
-  }catch(e){
-    box.innerHTML = `<p class="err">${e.message === "tmdb-auth" ? "The film database key isn't working, so films couldn't be matched." : e.message && e.message.includes("storage") ? esc(e.message) : "The import stopped partway. Your progress is cached, so dropping the file again picks up quickly."}</p>`;
-  }finally{ importing = false; }
 }
 
 /* ---------- people ---------- */

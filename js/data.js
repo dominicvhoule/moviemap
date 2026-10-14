@@ -1,4 +1,4 @@
-// MovieMap data layer: TMDB lookups, Wikidata setting lookups, Letterboxd export parsing, storage.
+// MovieMap data layer: TMDB lookups, Wikidata setting lookups, country helpers.
 (function(){
 const CFG = window.MOVIEMAP_CONFIG || {};
 const MM = window.MM = {};
@@ -86,7 +86,7 @@ MM.searchFilms = async function(query){
   }));
 };
 
-// Best TMDB match for a title + year (from a Letterboxd export or the featured list).
+// Best TMDB match for a title + year (the featured list and feed entries without a TMDB id).
 MM.matchFilm = async function(title, year){
   const tries = year ? [{year}, {}] : [{}];
   for(const extra of tries){
@@ -110,7 +110,7 @@ MM.matchFilm = async function(title, year){
 
 // Full details for one TMDB id: director, Wikidata id, production countries.
 MM.filmDetails = async function(id){
-  const cacheKey = "mm-tmdb:" + id;
+  const cacheKey = "mm-tmdb2:" + id;
   const hit = lsGet(cacheKey, null); if(hit) return hit;
   const d = await tmdb("/movie/" + id, {append_to_response:"external_ids,credits"});
   if(!d) return null;
@@ -119,7 +119,8 @@ MM.filmDetails = async function(id){
     tmdb:d.id, t:d.title, ot:d.original_title, y:d.release_date ? +d.release_date.slice(0,4) : "",
     d:dirs.slice(0,3).join(", "), poster:d.poster_path || null,
     qid:(d.external_ids && d.external_ids.wikidata_id) || null,
-    pc:(d.production_countries||[]).map(c=>c.name)
+    pc:(d.production_countries||[]).map(c=>c.name),
+    iso:[...(d.production_countries||[]).map(c=>c.iso_3166_1), ...(d.origin_country||[])].filter(Boolean)
   };
   lsSet(cacheKey, out);
   return out;
@@ -169,8 +170,31 @@ MM.wikidataSettings = async function(qids){
     Object.keys(byFilm).forEach(f=>{ const s = pickSetting(byFilm[f]); if(s) out[f] = s; });
     if(i + 40 < list.length) await MM.sleep(250);
   }
+  // Second pass for films with no narrative location: the film's country of origin (P495), marked approximate.
+  const rest = list.filter(q=>!out[q]);
+  for(let i=0; i<rest.length; i+=60){
+    const chunk = rest.slice(i, i+60);
+    const query = `SELECT ?film ?country ?countryLabel ?contLabel WHERE {
+      VALUES ?film { ${chunk.map(q=>"wd:"+q).join(" ")} }
+      ?film wdt:P495 ?country .
+      OPTIONAL { ?country wdt:P30 ?cont . }
+      SERVICE wikibase:label { bd:serviceParam wikibase:language "en". }
+    }`;
+    try{
+      const r = await fetch("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(query), {headers:{Accept:"application/sparql-results+json"}});
+      if(!r.ok) continue;
+      (await r.json()).results.bindings.forEach(b=>{
+        const f = qidOf(b.film.value); if(out[f]) return;
+        const name = b.countryLabel ? b.countryLabel.value : "";
+        const pt = MM.countryPoint(name); if(!pt) return;
+        out[f] = {p:MM.displayCountry(name), c:MM.displayCountry(name), cont:MM.fixContinent(b.contLabel ? b.contLabel.value : ""),
+          lon:+pt[0].toFixed(3), lat:+pt[1].toFixed(3), ap:1, n:FALLBACK_NOTE, src:"production"};
+      });
+    }catch(e){}
+  }
   return out;
 };
+const FALLBACK_NOTE = "No setting on record yet, so this is pinned to the country the film comes from. Move the pin if you know better.";
 
 // From all narrative-location rows for one film, pick the most specific place that has coordinates.
 function pickSetting(rows){
@@ -200,11 +224,14 @@ function pickSetting(rows){
 }
 
 // Fallback when Wikidata has no setting: the first production country, marked approximate.
+let regionNames = null;
+try{ regionNames = new Intl.DisplayNames(["en"], {type:"region"}); }catch(e){}
 MM.fallbackSetting = function(det){
-  for(const c of (det && det.pc) || []){
+  const names = [...((det && det.pc) || [])];
+  ((det && det.iso) || []).forEach(code=>{ try{ const n = regionNames && regionNames.of(code); if(n) names.push(n); }catch(e){} });
+  for(const c of names){
     const pt = MM.countryPoint(c);
-    if(pt) return {p:MM.displayCountry(c), c:MM.displayCountry(c), cont:"", lon:+pt[0].toFixed(3), lat:+pt[1].toFixed(3), ap:1,
-      n:"No setting on record yet, so this is pinned to the country that produced it. Move the pin if you know better.", src:"production"};
+    if(pt) return {p:MM.displayCountry(c), c:MM.displayCountry(c), cont:"", lon:+pt[0].toFixed(3), lat:+pt[1].toFixed(3), ap:1, n:FALLBACK_NOTE, src:"production"};
   }
   return null;
 };
@@ -231,64 +258,6 @@ MM.resolveSettings = async function(dets, onStep){
   if(MM.saveRemoteSettings && Object.keys(fresh).length){ try{ await MM.saveRemoteSettings(fresh); }catch(e){} }
   if(onStep) onStep(dets.length, dets.length);
   return dets.map(d=>d ? MM.settingCache.get(d.tmdb) : null);
-};
-
-/* ---------------- Letterboxd export ---------------- */
-// RFC 4180-ish CSV parser (quoted fields, commas and newlines inside quotes).
-MM.parseCSV = function(text){
-  const rows = []; let row = [], field = "", q = false;
-  text = text.replace(/^﻿/, "");
-  for(let i=0; i<text.length; i++){
-    const ch = text[i];
-    if(q){
-      if(ch === '"'){ if(text[i+1] === '"'){ field += '"'; i++; } else q = false; }
-      else field += ch;
-    } else if(ch === '"') q = true;
-    else if(ch === ","){ row.push(field); field = ""; }
-    else if(ch === "\n" || ch === "\r"){
-      if(ch === "\r" && text[i+1] === "\n") i++;
-      row.push(field); field = ""; rows.push(row); row = [];
-    } else field += ch;
-  }
-  if(field !== "" || row.length){ row.push(field); rows.push(row); }
-  const head = (rows.shift() || []).map(h=>h.trim());
-  return rows.filter(r=>r.some(c=>c.trim()!=="")).map(r=>{ const o = {}; head.forEach((h,i)=>o[h] = (r[i]||"").trim()); return o; });
-};
-
-// Accepts the export .zip or any of its CSVs (watched, ratings, diary, reviews). Returns one entry per film.
-MM.readLetterboxd = async function(files){
-  const texts = {};
-  for(const file of files){
-    if(/\.zip$/i.test(file.name) || file.type === "application/zip"){
-      const zip = await JSZip.loadAsync(file);
-      for(const name of Object.keys(zip.files)){
-        const base = name.split("/").pop().toLowerCase();
-        if(["watched.csv","ratings.csv","diary.csv","reviews.csv"].includes(base) && !name.includes("deleted/")) texts[base] = await zip.files[name].async("string");
-      }
-    } else if(/\.csv$/i.test(file.name)){
-      texts[file.name.toLowerCase().split("/").pop()] = await file.text();
-    }
-  }
-  const films = new Map();
-  const keyOf = r => r.Name ? MM.norm(r.Name) + "|" + (r.Year||"") : null;
-  const touch = r => { const k = keyOf(r); if(!k) return null; if(!films.has(k)) films.set(k, {t:r.Name, y:+r.Year||"", watched:r.Date||""}); return films.get(k); };
-  const order = ["watched.csv","diary.csv","ratings.csv","reviews.csv"];
-  let used = 0;
-  for(const name of order){
-    if(!texts[name]) continue; used++;
-    MM.parseCSV(texts[name]).forEach(r=>{
-      const f = touch(r); if(!f) return;
-      const wd = r["Watched Date"] || r.Date;
-      if(wd && (!f.watched || wd > f.watched)) f.watched = wd;
-      if(r.Rating && +r.Rating > 0) f.r = +r.Rating;
-      if(name === "reviews.csv") f.rv = 1;
-    });
-  }
-  // Any other CSV someone drops in: use it if it has Name + Year columns.
-  if(!used){
-    Object.values(texts).forEach(t=>MM.parseCSV(t).forEach(r=>{ const f = touch(r); if(f && r.Rating && +r.Rating>0) f.r = +r.Rating; }));
-  }
-  return [...films.values()];
 };
 
 /* ---------------- avatar colour ---------------- */
