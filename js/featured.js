@@ -1,0 +1,36 @@
+// Grant's hand-checked starter map, shown to visitors who aren't signed in.
+window.FEATURED = {
+  username:"grant", name:"Grant", featured:true,
+  bio:"Logs everything. Partial to Argentine cinema.",
+  films:[
+    {t:"Mayday",y:2026,d:"John Francis Daley & Jonathan Goldstein",p:"Behind Soviet lines",c:"Russia",lat:62.5,lon:40.5,ap:1,n:"A downed U.S. Navy pilot stranded in Soviet territory, 1987. The film never names an exact spot, so this pin is approximate."},
+    {t:"México 86",y:2025,d:"César Díaz",p:"Mexico City",c:"Mexico",lat:19.43,lon:-99.13,r:4,n:"A Guatemalan activist in exile in Mexico City around the 1986 World Cup."},
+    {t:"Jack Ryan: Ghost War",y:2026,d:"Andrew Bernstein",p:"Dubai",c:"United Arab Emirates",lat:25.20,lon:55.27,r:3.5,n:"A botched MI6 operation in Dubai pulls Ryan back in; Dubai bookends the film, with a middle stretch in London."},
+    {t:"Balls Up",y:2026,d:"Peter Farrelly",p:"World Cup final, Brazil",c:"Brazil",lat:-22.91,lon:-43.17,ap:1,r:3,n:"Two condom marketers wreck a fictional World Cup final hosted by Brazil. Host city isn't pinned down, so the pin sits on Rio."},
+    {t:"The Drama",y:2026,d:"Kristoffer Borgli",p:"Back Bay, Boston",c:"United States",lat:42.35,lon:-71.08,rv:1,n:"An engaged couple's wedding week in Boston comes apart after a revelation."},
+    {t:"Hoppers",y:2026,d:"Daniel Chong",p:"Beaverton (fictional town)",c:"United States",lat:45.49,lon:-122.80,ap:1,r:4,rv:1,n:"Set in a fictional town called Beaverton. Pinned at the real Beaverton, Oregon, which celebrated the namesake."},
+    {t:"Strangers in the Park",y:2026,d:"Juan José Campanella",p:"Parque Lezama, Buenos Aires",c:"Argentina",lat:-34.628,lon:-58.369,n:"Two old men, a communist and a stay-out-of-it type, trade stories on a bench in Parque Lezama."},
+    {t:"Cinque secondi",y:2025,d:"Paolo Virzì",p:"Isolated valley, Tuscany",c:"Italy",lat:43.35,lon:11.0,ap:1,n:"A recluse in the stables of a crumbling villa in the Tuscan countryside. The valley isn't named."},
+    {t:"Belén",y:2025,d:"Dolores Fonzi",p:"San Miguel de Tucumán",c:"Argentina",lat:-26.81,lon:-65.22,n:"A lawyer takes on the case of a young woman jailed in Tucumán."},
+    {t:"Nuremberg",y:2025,d:"James Vanderbilt",p:"Nuremberg",c:"Germany",lat:49.45,lon:11.08,n:"The 1945 war crimes tribunal and the psychiatrist assigned to Hermann Göring."},
+    {t:"Good Fortune",y:2025,d:"Aziz Ansari",p:"Los Angeles",c:"United States",lat:34.05,lon:-118.24,r:2,n:"A guardian angel swaps the lives of a gig worker and a tech investor in LA."},
+    {t:"Sentimental Value",y:2025,d:"Joachim Trier",p:"Oslo",c:"Norway",lat:59.91,lon:10.75,n:"Two sisters and their filmmaker father, centered on the family house in Oslo."},
+    {t:"Avignon",y:2025,d:"Johann Dionnet",p:"Avignon Festival",c:"France",lat:43.949,lon:4.806,r:4.5,n:"An actor at the Avignon theatre festival pretends to be playing the lead in Le Cid to win over a colleague."},
+    {t:"M",y:1931,d:"Fritz Lang",p:"Berlin",c:"Germany",lat:52.52,lon:13.40,n:"Police and the criminal underworld both hunt a child murderer through the city."},
+    {t:"Puan",y:2023,d:"María Alché & Benjamín Naishtat",p:"UBA philosophy faculty (Puan st.), Buenos Aires",c:"Argentina",lat:-34.625,lon:-58.437,n:"A philosophy professor fights for his late mentor's chair at the University of Buenos Aires."},
+    {t:"Fever Dream",y:2021,d:"Claudia Llosa",p:"Rural Buenos Aires province",c:"Argentina",lat:-34.9,lon:-60.2,ap:1,r:5,rv:1,n:"A summer house in Argentine farm country, poisoned fields nearby. The town is unnamed."},
+    {t:"The Endless Trench",y:2019,d:"Aitor Arregi, Jon Garaño & José Mari Goenaga",p:"Andalusian village",c:"Spain",lat:36.6,lon:-4.64,ap:1,n:"A Republican hides inside his own house for over 30 years after the Civil War. Pinned near Mijas, whose mayor's story echoes it."},
+    {t:"Thi Mai",y:2022,d:"Patricia Ferreira",p:"Hanoi and northern Vietnam",c:"Vietnam",lat:21.03,lon:105.85,rv:1,n:"Three friends travel to Vietnam to collect an adopted daughter."},
+    {t:"Person to Person",y:2017,d:"Dustin Guy Defa",p:"New York City",c:"United States",lat:40.71,lon:-73.96,n:"One day across a handful of New Yorkers."},
+    {t:"Chicago Boys",y:2015,d:"Carola Fuentes & Rafael Valdeavellano",p:"Santiago",c:"Chile",lat:-33.45,lon:-70.67,n:"Documentary on the Chilean economists trained in Chicago who reshaped Chile under Pinochet."},
+    {t:"Wild Tales",y:2014,d:"Damián Szifron",p:"Across Argentina",c:"Argentina",lat:-36.6,lon:-64.3,ap:1,rv:1,n:"Six revenge stories set around Argentina, from a desert highway to a Buenos Aires wedding hall."},
+    {t:"End of Watch",y:2012,d:"David Ayer",p:"South Central, Los Angeles",c:"United States",lat:33.96,lon:-118.27,n:"Two LAPD officers on patrol in Newton Division."},
+    {t:"Barbara",y:2012,d:"Christian Petzold",p:"Baltic coast, East Germany",c:"Germany",lat:53.95,lon:13.2,ap:1,r:4.5,n:"A doctor exiled to a provincial hospital near the Baltic coast in 1980 plans her escape."},
+    {t:"No Country for Old Men",y:2007,d:"Joel & Ethan Coen",p:"Terrell County, West Texas",c:"United States",lat:30.14,lon:-102.39,n:"A hunter finds drug money near the border, 1980."},
+    {t:"DodgeBall",y:2004,d:"Rawson Marshall Thurber",p:"Las Vegas tournament",c:"United States",lat:36.17,lon:-115.14,ap:1,n:"The gym's hometown is never named; the climax is the Las Vegas tournament."},
+    {t:"Office Space",y:1999,d:"Mike Judge",p:"Texas office park",c:"United States",lat:32.95,lon:-96.82,ap:1,n:"Initech sits in an unnamed Texas suburb, filmed around Dallas and Austin."},
+    {t:"Land and Freedom",y:1995,d:"Ken Loach",p:"Aragon front",c:"Spain",lat:41.65,lon:-0.88,r:3.5,n:"A Liverpool volunteer fights with the POUM militia on the Aragon front, 1936."},
+    {t:"Dead Poets Society",y:1989,d:"Peter Weir",p:"Welton Academy, Vermont (fictional)",c:"United States",lat:44.0,lon:-72.7,ap:1,n:"A fictional Vermont boarding school, 1959."},
+    {t:"Empire of the Sun",y:1987,d:"Steven Spielberg",p:"Shanghai",c:"China",lat:31.23,lon:121.47,n:"A British boy separated from his parents in Japanese-occupied Shanghai."}
+  ]
+};
