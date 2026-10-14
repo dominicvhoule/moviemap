@@ -6,9 +6,9 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 
 ## What it does
 
-- **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings).
+- **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings). Country names appear as you zoom in.
 - **Log a film**: search a title, pick the right match, and MovieMap finds the setting and poster. Move the pin if it's wrong.
-- **Letterboxd**: connect your Letterboxd username and new diary entries are added automatically (checked when you open the site, at most every 6 hours).
+- **Letterboxd**: connect your Letterboxd username and every film on your Letterboxd Films page is added, with ratings. New ones are picked up when you open the site (at most every 6 hours); Sync now re-reads everything.
 - **People**: search members by username, follow them, view their maps, find friends from your phone's contacts (Android Chrome), or share an invite link.
 - **Phone layout**: wide map on top, posters in a swipeable strip below.
 
@@ -47,12 +47,12 @@ js/data.js          TMDB and Wikidata lookups
 js/app.js           map, logbook, logging, import, accounts, people
 data/world.json     country shapes (Natural Earth via world-atlas)
 supabase/schema.sql database tables and access rules
-supabase/functions/letterboxd-feed/index.ts  reads a public Letterboxd diary feed
+supabase/functions/letterboxd-feed/index.ts  reads public Letterboxd profiles (diary feed, Films pages, film pages)
 ```
 
 ## Limits
 
-- **Letterboxd**: there's no sign-in yet (Letterboxd's API is invitation-only). Username sync reads the public diary feed, which covers only diary entries, about the last 50, and only for public profiles. Films outside the feed can be added with Log a film.
+- **Letterboxd**: there's no sign-in yet (Letterboxd's API is invitation-only). Sync reads public profile pages, so it only works for public profiles and can break if Letterboxd changes its page layout. Reading pages this way may not be allowed under Letterboxd's terms; switch to the official API once access is granted.
 - **Contacts on iPhone**: Safari doesn't let websites read contacts. iPhone users can share an invite link or search by username instead.
 - **Wikidata coverage**: very new or obscure films often have no setting recorded yet, so they fall back to an approximate country pin.
 

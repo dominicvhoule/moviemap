@@ -47,6 +47,8 @@ a{color:var(--sky)}
 .country.visited{fill:var(--visited)}
 .grat{fill:none;stroke:var(--graticule);stroke-width:.6;vector-effect:non-scaling-stroke}
 .sphere{fill:var(--ocean)}
+.clabel{font-family:var(--f-mono);font-size:9.5px;letter-spacing:.06em;fill:var(--muted);text-anchor:middle;dominant-baseline:central;paint-order:stroke;stroke:var(--land);stroke-width:3px;stroke-linejoin:round;pointer-events:none;opacity:.85}
+.clabel.visited{fill:var(--ink);font-weight:500;stroke:var(--visited);opacity:1}
 .pin{cursor:pointer}
 .pin circle.dot{fill:var(--pin);stroke:var(--pin-ring);stroke-width:2;vector-effect:non-scaling-stroke}
 .pin.approx circle.dot{fill:var(--card);stroke:var(--pin);stroke-width:2.5;stroke-dasharray:3 2}

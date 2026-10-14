@@ -107,7 +107,7 @@ const myKeys = () => new Set(myFilms.map(MM.filmKey));
 
 /* ================= map ================= */
 const svg = d3.select("#map");
-const gRoot = svg.append("g"), gLand = gRoot.append("g"), gPins = gRoot.append("g");
+const gRoot = svg.append("g"), gLand = gRoot.append("g"), gLabels = gRoot.append("g").attr("aria-hidden","true"), gPins = gRoot.append("g");
 let countries = [], projection, path, W = 0, H = 0, k = 1;
 let viewing = {owner:null, films:[], mine:false};   // what the map shows
 let selected = null, picking = null, preview = null;
@@ -121,11 +121,58 @@ function drawBase(){
   gLand.append("path").attr("class","sphere").attr("d", path({type:"Sphere"}));
   gLand.append("path").attr("class","grat").attr("d", path(d3.geoGraticule10()));
   gLand.selectAll("path.country").data(countries).join("path").attr("class","country").attr("d", path);
+  buildLabels();
   renderPins();
+}
+
+/* country names: placed on each country's largest landmass, shown once there's room at the current zoom */
+const SHORT_NAMES = {"United States of America":"United States","Dem. Rep. Congo":"DR Congo","Central African Rep.":"Central African Rep.","Bosnia and Herz.":"Bosnia","Dominican Rep.":"Dominican Rep.","Eq. Guinea":"Eq. Guinea","S. Sudan":"South Sudan","Solomon Is.":"Solomon Is.","Fr. S. Antarctic Lands":"","Falkland Is.":"Falklands","W. Sahara":"W. Sahara","N. Cyprus":"","Somaliland":"","Antarctica":"Antarctica"};
+let labels = [], pinGroups = [];
+function largestPart(g){
+  if(!g || g.type !== "MultiPolygon") return g;
+  let best = null, bestA = -1;
+  g.coordinates.forEach(c=>{ const p = {type:"Polygon", coordinates:c}; const a = d3.geoArea(p); if(a > bestA){ bestA = a; best = p; } });
+  return best;
+}
+function buildLabels(){
+  labels = countries.map(f=>{
+    const name = f.properties.name;
+    const label = SHORT_NAMES[name] ?? name;
+    if(!label) return null;
+    const part = largestPart(f.geometry); if(!part) return null;
+    const p = path.centroid(part); if(!p || !isFinite(p[0])) return null;
+    return {name, label:label.toUpperCase(), x:p[0], y:p[1], area:path.area(part)};
+  }).filter(Boolean).sort((a,b)=>b.area - a.area);
+  gLabels.selectAll("text").data(labels, d=>d.name).join("text").attr("class","clabel").text(d=>d.label);
+  updateLabels();
+}
+function updateLabels(){
+  if(!labels.length) return;
+  const visited = new Set(viewing.films.map(f=>MM.geoName(f.c)));
+  // Work in zoomed pixel space (the pan offset is the same for everything, so it can be ignored).
+  const pins = pinGroups.map(g=>[g.x * k, g.y * k, g.films.length > 1 ? 16 : 9]);
+  const order = [...labels].sort((a,b)=>(visited.has(b.name) - visited.has(a.name)) || b.area - a.area);
+  const placed = [], offset = new Map();
+  for(const d of order){
+    const w = d.label.length * 6.4 + 6, h = 12;
+    if(d.area * k * k < w * 12 * (visited.has(d.name) ? 1.1 : 2.2)) continue;   // country too small on screen for its name
+    const cx = d.x * k, cy = d.y * k;
+    for(const off of [0, 16, -16]){
+      const box = [cx - w/2, cy + off - h/2, cx + w/2, cy + off + h/2];
+      const onPin = pins.some(([px,py,r])=>px > box[0]-r && px < box[2]+r && py > box[1]-r && py < box[3]+r);
+      const onLabel = placed.some(o=>!(box[2] < o[0] || box[0] > o[2] || box[3] < o[1] || box[1] > o[3]));
+      if(!onPin && !onLabel){ placed.push(box); offset.set(d.name, off); break; }
+    }
+  }
+  gLabels.selectAll("text")
+    .attr("display", d=>offset.has(d.name) ? null : "none")
+    .classed("visited", d=>visited.has(d.name))
+    .attr("transform", d=>`translate(${d.x},${d.y + (offset.get(d.name)||0)/k}) scale(${1/k})`);
 }
 const zoom = d3.zoom().scaleExtent([1,40]).on("zoom", ev=>{
   gRoot.attr("transform", ev.transform); k = ev.transform.k;
   gPins.selectAll(".pin.film").attr("transform", d=>`translate(${d.x},${d.y}) scale(${1/k})`);
+  updateLabels();
   if(preview && projection){ const p = projection([preview.lon, preview.lat]); gPins.selectAll(".preview").attr("transform", `translate(${p[0]},${p[1]}) scale(${1/k})`); }
 });
 svg.call(zoom).on("dblclick.zoom", null);
@@ -151,7 +198,7 @@ function filtered(){
 function renderPins(){
   if(!projection) return;
   const list = filtered();
-  const groups = groupFilms(list);
+  const groups = pinGroups = groupFilms(list);
   const pins = gPins.selectAll("g.pin.film").data(groups, d=>d.key).join(enter=>{
     const g = enter.append("g").attr("class","pin film").attr("tabindex",0).attr("role","button");
     g.append("circle").attr("class","dot"); g.append("text"); return g;
@@ -165,6 +212,7 @@ function renderPins(){
   pins.select("text").text(d=>d.films.length>1 ? d.films.length : "");
   const visited = new Set(viewing.films.map(f=>MM.geoName(f.c)));
   gLand.selectAll("path.country").classed("visited", d=>visited.has(d.properties.name));
+  updateLabels();
   gPins.selectAll(".preview").remove();
   if(preview){
     const p = projection([preview.lon, preview.lat]);
@@ -477,18 +525,43 @@ async function placeEntries(entries, progress){
   return {ready, unmatched, unplaced};
 }
 
-// Ask the server function for the member's recent diary entries.
-async function fetchLetterboxdFeed(username){
-  const {data, error} = await sb.functions.invoke("letterboxd-feed", {body:{username}});
+// Talk to the server function that reads Letterboxd for us.
+async function lbInvoke(body){
+  const {data, error} = await sb.functions.invoke("letterboxd-feed", {body});
   if(error){
     let code = "";
     const status = error.context && error.context.status;
     try{ code = (await error.context.json()).error; }catch(e){}
     // No "error" field from our function plus a 404 means the function itself isn't deployed.
-    const err = new Error(code || (status === 404 || error.name === "FunctionsFetchError" ? "not_deployed" : "failed"));
-    throw err;
+    throw new Error(code || (status === 404 || error.name === "FunctionsFetchError" ? "not_deployed" : "failed"));
   }
-  return (data && data.films || []).map(f=>({t:f.title, y:f.year || "", r:f.rating || null, watched:f.watched || "", tmdb:f.tmdb}));
+  return data || {};
+}
+// Recent diary entries: exact TMDB ids and watch dates.
+async function fetchLetterboxdFeed(username){
+  const d = await lbInvoke({username});
+  return (d.films || []).map(f=>({t:f.title, y:f.year || "", r:f.rating || null, watched:f.watched || "", tmdb:f.tmdb}));
+}
+// Every film on the member's Films page (all pages), including ones never logged in the diary.
+async function fetchLetterboxdFilms(username, maxPages, onPage){
+  const all = [];
+  for(let page=1; page<=maxPages; page++){
+    const d = await lbInvoke({username, mode:"films", page});
+    if(d.films && d.films.length && d.films[0].slug === undefined) break;   // an older function without list support
+    all.push(...(d.films || []).map(f=>({t:f.title, y:f.year || "", r:f.rating || null, slug:f.slug})));
+    onPage && onPage(page, all.length);
+    if(!d.more) break;
+  }
+  return all;
+}
+// Fill in year + TMDB id from each film's Letterboxd page when the grid didn't show a year.
+async function fillFromFilmPages(entries, onStep){
+  const need = entries.filter(e=>!e.y && !e.tmdb && e.slug);
+  for(let i=0; i<need.length; i+=20){
+    const d = await lbInvoke({mode:"film", slugs:need.slice(i, i+20).map(e=>e.slug)}).catch(()=>({}));
+    (d.films || []).forEach(x=>{ const e = need.find(n=>n.slug === x.slug); if(e){ if(x.year) e.y = x.year; if(x.tmdb) e.tmdb = x.tmdb; } });
+    onStep && onStep(Math.min(i+20, need.length), need.length);
+  }
 }
 const LB_ERRORS = {
   not_found:"Letterboxd has no public profile with that username. Check the spelling, and make sure the profile isn't private.",
@@ -498,35 +571,60 @@ const LB_ERRORS = {
   unreachable:"Letterboxd didn't answer just now. Try again in a few minutes."
 };
 
-// Pull new diary entries into the signed-in member's map. quiet = background run on sign-in.
+// Pull films into the signed-in member's map.
+// full: read every page of the member's films (Connect, Sync now). Otherwise: the diary feed plus the first page.
 let syncing = false;
-async function syncLetterboxd(quiet){
+async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
   if(syncing || !cloud() || !me.letterboxd) return null;
   syncing = true;
+  const say = s => progress && progress(s);
   try{
+    say("Reading your Letterboxd diary…");
     const feed = await fetchLetterboxdFeed(me.letterboxd);
+    let list = [];
+    try{
+      list = await fetchLetterboxdFilms(me.letterboxd, full ? 200 : 1, (pg, n)=>say(`Reading your Letterboxd films… page ${pg} (${n} films)`));
+    }catch(e){ if(full) throw e; }
+    // Merge: diary entries win (exact TMDB id and watch date); the films list adds everything else.
+    const merged = new Map();
+    feed.forEach(e=>{ const k = MM.filmKey(e); if(!merged.has(k)) merged.set(k, e); });
+    list.forEach(e=>{
+      const k = e.y ? MM.filmKey(e) : "slug:" + e.slug;   // no year yet: keep apart until its film page fills it in
+      if(merged.has(k)){ const m = merged.get(k); if(m.r == null && e.r) m.r = e.r; m.slug = m.slug || e.slug; }
+      else merged.set(k, e);
+    });
+    const all = [...merged.values()];
     const have = myKeys(), haveIds = new Set(myFilms.map(f=>f.tmdb).filter(Boolean));
-    const seen = new Set();
-    const todo = feed.filter(e=>{ const k = e.tmdb || MM.filmKey(e); if(seen.has(k)) return false; seen.add(k); return !haveIds.has(e.tmdb) && !have.has(MM.filmKey(e)); });
+    let todo = all.filter(e=>!(e.tmdb && haveIds.has(e.tmdb)) && !have.has(MM.filmKey(e)));
+    await fillFromFilmPages(todo, (d,n)=>say(`Looking up ${n} film${n===1?"":"s"} without a year… ${d}/${n}`));
+    const once = new Set();
+    todo = todo.filter(e=>{
+      const k = e.tmdb ? "t" + e.tmdb : MM.filmKey(e);
+      if(once.has(k) || once.has(MM.filmKey(e))) return false;
+      once.add(k); once.add(MM.filmKey(e));
+      return !(e.tmdb && haveIds.has(e.tmdb)) && !have.has(MM.filmKey(e));
+    });
     let added = 0, missed = [];
     if(todo.length){
-      const {ready, unmatched, unplaced} = await placeEntries(todo);
+      say(`Matching ${todo.length} new film${todo.length===1?"":"s"}…`);
+      const {ready, unmatched, unplaced} = await placeEntries(todo, (d,n)=>say(d<n ? `Matching ${n} new films… ${d}/${n}` : "Finding where each film takes place…"));
+      say("Saving to your map…");
       added = (await Store.add(ready)).added;
       await reloadMine();
       missed = [...unmatched, ...unplaced];
     }
     // Keep earlier skipped films that are still missing, so the list survives later syncs.
-    const prev = (MM.lsGet(lbReportKey(), null) || {missed:[]}).missed;
+    const prev = (MM.lsGet(lbReportKey(), null) || {missed:[]});
     const nowIds = new Set(myFilms.map(f=>f.tmdb).filter(Boolean)), nowKeys = myKeys();
     const byId = new Map();
-    [...prev, ...missed].forEach(m=>{ if(!(m.tmdb && nowIds.has(m.tmdb)) && !nowKeys.has(MM.filmKey(m))) byId.set(m.tmdb || MM.filmKey(m), {t:m.t, y:m.y, tmdb:m.tmdb, poster:m.poster||null}); });
-    MM.lsSet(lbReportKey(), {feed:seen.size, missed:[...byId.values()]});
+    [...prev.missed, ...missed].forEach(m=>{ if(!(m.tmdb && nowIds.has(m.tmdb)) && !nowKeys.has(MM.filmKey(m))) byId.set(m.tmdb || MM.filmKey(m), {t:m.t, y:m.y, tmdb:m.tmdb||null, poster:m.poster||null}); });
+    MM.lsSet(lbReportKey(), {total: full ? all.length : Math.max(prev.total||0, all.length), full: full || !!prev.full, missed:[...byId.values()]});
     MM.lsSet(lbSyncKey(), Date.now());
     if(added && viewing.mine){ viewing.films = myFilms; renderAll(); fitPins(true); }
     if(byId.size && (added || !quiet)) toast(`${added ? `Added ${added} from Letterboxd. ` : ""}${byId.size} need${byId.size===1?"s":""} a pin: see the Letterboxd tab`);
     else if(added) toast(`Added ${added} film${added===1?"":"s"} from Letterboxd`);
     else if(!quiet) toast("You're up to date with Letterboxd");
-    return {added, seen:feed.length};
+    return {added, total:all.length};
   }catch(e){
     if(!quiet) toast(LB_ERRORS[e.message] || "Sync didn't go through. Try again.");
     return {error:e.message};
@@ -535,7 +633,9 @@ async function syncLetterboxd(quiet){
 function maybeAutoSync(){
   if(!cloud() || !me.letterboxd) return;
   const last = MM.lsGet(lbSyncKey(), 0);
-  if(Date.now() - last > LB_SYNC_EVERY) syncLetterboxd(true);
+  const rep = MM.lsGet(lbReportKey(), null);
+  // First time on this browser without a full read yet: read everything once.
+  if(Date.now() - last > LB_SYNC_EVERY) syncLetterboxd({quiet:true, full: !(rep && rep.full)});
 }
 
 function renderImport(){
@@ -547,16 +647,16 @@ function renderImport(){
   const onMap = new Set(myFilms.map(f=>f.tmdb).filter(Boolean)), mk = myKeys();
   const missing = rep ? rep.missed.filter(m=>!(m.tmdb && onMap.has(m.tmdb)) && !mk.has(MM.filmKey(m))) : [];
   el.innerHTML = `<h2 class="h">Letterboxd</h2>
-    <p class="hint">Connect your Letterboxd username and the films in your diary show up on your map. New entries are added automatically when you open MovieMap. It reads your public diary, so there's no password involved.</p>
+    <p class="hint">Connect your Letterboxd username and every film you've watched shows up on your map. New ones are added automatically when you open MovieMap. It reads your public Letterboxd profile, so there's no password involved.</p>
     ${cloud() ? `
     <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${esc(lb||"")}"><button class="btn" type="submit">${lb ? "Sync now" : "Connect"}</button></form>
     <p class="hint" id="lbs">${lb ? `Linked to <a href="https://letterboxd.com/${esc(lb)}/" target="_blank" rel="noopener">letterboxd.com/${esc(lb)}</a>.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}` : "Your Letterboxd profile needs to be public."}</p>
     ${rep ? `<div class="box">
-      <p class="ok" style="margin:0"><b>${rep.feed} film${rep.feed===1?"":"s"}</b> in your Letterboxd diary${missing.length ? `, <b>${missing.length}</b> still need${missing.length===1?"s":""} a pin` : ", all on your map"}.</p>
+      <p class="ok" style="margin:0"><b>${rep.total} film${rep.total===1?"":"s"}</b> on your Letterboxd${missing.length ? `, <b>${missing.length}</b> still need${missing.length===1?"s":""} a pin` : ", all on your map"}.</p>
       ${missing.length ? `<p class="hint">We couldn't work out where ${missing.length===1 ? "this one takes" : "these take"} place. Tap Place it to pin ${missing.length===1 ? "it" : "each one"} yourself.</p>
       <ul class="results">${missing.map((m,i)=>`<li><button data-i="${i}"><span class="th" ${m.poster ? `style="background-image:url('${MM.poster(m.poster,"w92")}')"` : ""}></span><span style="min-width:0"><b>${esc(m.t)} <span class="m">${esc(m.y)}</span></b><span class="m" style="color:var(--rust)">Place it →</span></span></button></li>`).join("")}</ul>` : ""}
     </div>` : ""}
-    <div class="notice"><b>Missing a film?</b> Only films you log in your Letterboxd <b>diary</b> come through, and only your 50 most recent entries. Films you marked as watched without a diary entry, or older entries past those 50, won't appear. Add those with <a href="#/log">Log a film</a>.</div>`
+    <p class="hint">Sync now reads your whole Letterboxd films list, which takes a minute for big libraries. Your profile has to be public. Anything that doesn't come through can be added with <a href="#/log">Log a film</a>.</p>`
     : `<p class="notice">${sb ? '<a href="#/account">Sign in</a> to connect your Letterboxd username.' : "Accounts aren't switched on for this site yet."}</p>`}`;
   el.querySelectorAll(".results button").forEach(b=>b.onclick = ()=>{ pendingLog = missing[+b.dataset.i]; location.hash = "#/log"; });
   const f = $("#lbf");
@@ -565,7 +665,7 @@ function renderImport(){
     const s = $("#lbs"), btn = f.querySelector("button");
     const name = $("#lbu").value.trim().replace(/^@/,"").replace(/^https?:\/\/(www\.)?letterboxd\.com\//i,"").replace(/\/.*$/,"");
     if(!/^[A-Za-z0-9_]{1,30}$/.test(name)){ s.textContent = "Letterboxd usernames are letters, numbers and underscores."; return; }
-    btn.disabled = true; s.textContent = "Checking your Letterboxd diary…"; s.classList.add("busy");
+    btn.disabled = true; s.textContent = "Checking your Letterboxd profile…"; s.classList.add("busy");
     try{
       if(name !== me.letterboxd){
         try{ await fetchLetterboxdFeed(name); }
@@ -574,7 +674,7 @@ function renderImport(){
         if(error){ s.classList.remove("busy"); s.textContent = "Couldn't save your username. Try again."; return; }
         me.letterboxd = name;
       }
-      const r = await syncLetterboxd(false);
+      const r = await syncLetterboxd({full:true, progress: msg=>{ s.textContent = msg; }});
       if(r && !r.error) renderImport();
       else { s.classList.remove("busy"); s.textContent = (r && LB_ERRORS[r.error]) || "Sync didn't go through. Try again."; }
     }finally{ btn.disabled = false; }
