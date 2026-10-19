@@ -14,6 +14,7 @@ function toast(msg){ const el = $("#toast"); el.textContent = msg; el.hidden = f
 // Continents for the featured list's countries (logged films carry their own).
 const CONT = {"Russia":"Europe","Mexico":"North America","United Arab Emirates":"Asia","Brazil":"South America","United States":"North America","Argentina":"South America","Italy":"Europe","Germany":"Europe","Norway":"Europe","France":"Europe","Spain":"Europe","Vietnam":"Asia","Chile":"South America","China":"Asia","Lebanon":"Asia"};
 const contOf = f => f.cont || CONT[f.c] || "";
+const placeLine = f => (!f.p ? f.c : !f.c || f.p.includes(f.c) ? f.p : f.p + ", " + f.c) || "";
 
 /* ================= accounts (Supabase) ================= */
 // Accept the project URL with or without a trailing /rest/v1/ copied from the dashboard.
@@ -281,7 +282,7 @@ function openFilm(f, fly){
   detail.innerHTML = `<div class="top">${posterSlot(f, direct)}
     <div class="stub"><small>${esc(f.y)}${f.d ? " · " + esc(f.d) : ""}</small><h3>${esc(f.t)}</h3><button class="x" aria-label="Close">×</button></div></div>
     <div class="body">
-      <div><div class="place">${esc([f.p, f.p!==f.c ? f.c : ""].filter(Boolean).join(", "))}</div><div class="coord">${fmtCoord(f.lat, f.lon)}</div></div>
+      <div><div class="place">${esc(placeLine(f))}</div><div class="coord">${fmtCoord(f.lat, f.lon)}</div></div>
       ${f.n ? `<p class="note">${esc(f.n)}</p>` : ""}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${f.r ? `<span class="stars">${stars(f.r)}</span>` : ""}${f.rv ? '<span class="tag">Reviewed</span>' : ""}${isSeries(f) ? '<span class="tag tv">Series</span>' : ""}${f.ap ? '<span class="tag ap">Approx. setting</span>' : ""}${f.watched ? `<span class="tag" style="color:var(--muted)">Watched ${esc(f.watched)}</span>` : ""}</div>
       ${mine ? `<div class="cta"><button class="btn ghost small" id="d-move">Move pin</button><button class="btn ghost small" id="d-del">Remove</button></div>` : ""}
@@ -337,7 +338,7 @@ function renderList(){
     ul.innerHTML = `<li class="empty">${viewing.films.length ? "No films match that filter." : viewing.mine ? 'No films yet. <a href="#/log">Log a film</a> or <a href="#/import">connect Letterboxd</a>.' : "No films logged yet."}</li>`;
     return;
   }
-  ul.innerHTML = list.map((f,i)=>`<li><button data-i="${i}"><span class="bar ${f.ap?"ap":""} ${isSeries(f)?"tv":""}"></span><span class="th" data-i="${i}" data-t="${esc(f.t)}"></span><span style="min-width:0"><b>${esc(f.t)}</b><span class="meta">${esc(f.p || f.c)}${f.c && f.p && f.p!==f.c ? ", " + esc(f.c) : ""}</span></span><span class="r">${stars(f.r)}<em>${esc(f.y)}</em></span></button></li>`).join("");
+  ul.innerHTML = list.map((f,i)=>`<li><button data-i="${i}"><span class="bar ${f.ap?"ap":""} ${isSeries(f)?"tv":""}"></span><span class="th" data-i="${i}" data-t="${esc(f.t)}"></span><span style="min-width:0"><b>${esc(f.t)}</b><span class="meta">${esc(placeLine(f))}</span></span><span class="r">${stars(f.r)}<em>${esc(f.y)}</em></span></button></li>`).join("");
   ul.querySelectorAll("button").forEach(b=>b.onclick = ()=>openFilm(list[+b.dataset.i], true));
   listObserver = new IntersectionObserver(entries=>entries.forEach(async en=>{
     if(!en.isIntersecting) return;
@@ -483,7 +484,7 @@ function renderConfirm(){
       <div class="poster" style="width:72px">${f.poster ? `<img src="${MM.poster(f.poster,"w185")}" alt="">` : `<span class="ph">${esc(f.t)}</span>`}</div>
       <div style="min-width:0"><b class="sub" style="display:block;font-size:22px;line-height:1.05">${esc(f.t)}</b><span class="hint">${esc(f.y)}${f.d ? " · " + esc(f.d) : ""}</span></div>
     </div>
-    ${placed ? `<div><b>${esc([f.p, f.p!==f.c ? f.c : ""].filter(Boolean).join(", "))}</b><div class="hint" style="font-family:var(--f-mono);font-size:12px">${fmtCoord(f.lat,f.lon)}${f.ap ? " · approximate" : ""}</div></div>` : ""}
+    ${placed ? `<div><b>${esc(placeLine(f))}</b><div class="hint" style="font-family:var(--f-mono);font-size:12px">${fmtCoord(f.lat,f.lon)}${f.ap ? " · approximate" : ""}</div></div>` : ""}
     ${f.n ? `<p class="hint">${esc(f.n)}</p>` : ""}
     <button type="button" class="linkbtn" id="c-move">${placed ? "Pin in the wrong place? Move it" : "Place pin on the map"}</button>
     <div><div class="field" style="margin-bottom:2px">Your rating</div><div class="rate" id="c-rate"></div></div>
@@ -734,7 +735,7 @@ function renderImport(){
 }
 
 /* ---------- poster ---------- */
-let posterOpts = Object.assign({theme:"paper", size:"18x24", showKey:true}, MM.lsGet("mm-poster", {}));
+let posterOpts = Object.assign({theme:"swiss", size:"18x24", showKey:true}, MM.lsGet("mm-poster-v2", {}));
 let posterCanvas = null, posterURL = null, posterSeq = 0;
 function posterTitle(){
   const o = viewing.owner || {};
@@ -769,7 +770,7 @@ function renderPoster(){
 }
 async function drawPoster(){
   const seq = ++posterSeq;
-  MM.lsSet("mm-poster", posterOpts);
+  MM.lsSet("mm-poster-v2", posterOpts);
   await MM.posterFontsReady();
   if(seq !== posterSeq) return;
   posterCanvas = MM.renderPoster({

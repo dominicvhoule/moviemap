@@ -7,20 +7,22 @@ const SIZES = {
   "a3":    {label:"A3 (29.7 × 42 cm)", w:3600, h:5091, pdf:{unit:"mm", format:"a3"}}
 };
 const THEMES = {
+  swiss: {label:"Swiss", bg:"#FFFFFF", ink:"#111111", muted:"#6E6E6E", rule:"#111111", ocean:"#FFFFFF", land:"#E6E6E6", border:"#FFFFFF", grat:"#FFFFFF", visited:"#111111", pin:"#E4002B", series:"#E4002B", ring:"#FFFFFF", num:"#FFFFFF"},
   paper: {label:"Paper", bg:"#EDEFEA", ink:"#1C2733", muted:"#5D6A72", rule:"#C9CFC6", ocean:"#D3DFE3", land:"#F7F5EE", border:"#AEB9B2", grat:"#C2D2D8", visited:"#EFD9A7", pin:"#BF4E2A", series:"#3E7590", ring:"#F7F5EE", num:"#FFFFFF"},
   night: {label:"Night", bg:"#141B21", ink:"#E7EBE6", muted:"#9AA7AE", rule:"#2E3A43", ocean:"#0F1E27", land:"#26323A", border:"#3E4D55", grat:"#1A2C36", visited:"#5A5232", pin:"#E8714A", series:"#7FB2CB", ring:"#141B21", num:"#141B21"},
   sand:  {label:"Sand", bg:"#E9DFCB", ink:"#2B241B", muted:"#6E604C", rule:"#CDBF9F", ocean:"#CBD3C6", land:"#F3ECDC", border:"#B9A983", grat:"#BFC8B9", visited:"#E3B969", pin:"#8E3B1E", series:"#3D5A6B", ring:"#F3ECDC", num:"#FFFFFF"}
 };
 MM.POSTER_SIZES = SIZES; MM.POSTER_THEMES = THEMES;
 
+// One typeface throughout, in the Swiss manner.
+const SANS = `"Helvetica Neue", Helvetica, "Nimbus Sans", Arial, sans-serif`;
 const F = {
-  display: w => `800 ${w}px "Barlow Condensed", "Arial Narrow", Impact, sans-serif`,
-  body: (w, wt) => `${wt||400} ${w}px "IBM Plex Sans", system-ui, sans-serif`,
-  mono: (w, wt) => `${wt||500} ${w}px "IBM Plex Mono", ui-monospace, Menlo, monospace`
+  display: w => `700 ${w}px ${SANS}`,
+  body: (w, wt) => `${wt||400} ${w}px ${SANS}`,
+  mono: (w, wt) => `${wt||500} ${w}px ${SANS}`
 };
 MM.posterFontsReady = async function(){
   try{
-    await Promise.all([F.display(100), F.body(40), F.body(40,600), F.mono(40)].map(f=>document.fonts.load(f)));
     await document.fonts.ready;
   }catch(e){}
 };
@@ -54,14 +56,20 @@ MM.renderPoster = function(opts){
 
   // ---- header
   let y = M + 40;
-  ctx.fillStyle = T.muted; ctx.font = F.mono(46, 500);
-  spaced(ctx, "MOVIEMAP  ·  EVERY FILM HAS A PLACE", M, y, 10);
-  ctx.fillStyle = T.pin; ctx.fillRect(W - M - 120, y - 40, 120, 12);
-  y += 40;
-  const title = opts.title.toUpperCase();
-  const tpx = fitText(ctx, title, F.display, W - 2*M, 340, 140);
-  y += tpx * 0.86;
-  ctx.fillStyle = T.ink; ctx.font = F.display(tpx); ctx.fillText(title, M - tpx*0.02, y);
+  ctx.fillStyle = T.pin; ctx.fillRect(M, y - 36, 44, 44);   // the red square
+  ctx.fillStyle = T.ink; ctx.font = F.body(48, 700);
+  ctx.fillText("MovieMap", M + 72, y);
+  ctx.fillStyle = T.muted; ctx.font = F.body(48, 400);
+  ctx.fillText("Every film has a place", M + 72 + ctx.measureText("MovieMap  ").width + 40, y);
+  y += 60;
+  ctx.fillStyle = T.rule; ctx.fillRect(M, y, W - 2*M, 4);
+  y += 30;
+  const title = opts.title;
+  if("letterSpacing" in ctx) ctx.letterSpacing = "-12px";
+  const tpx = fitText(ctx, title, F.display, W - 2*M, 360, 140);
+  y += tpx * 0.9;
+  ctx.fillStyle = T.ink; ctx.font = F.display(tpx); ctx.fillText(title, M - tpx*0.04, y);
+  if("letterSpacing" in ctx) ctx.letterSpacing = "0px";
   y += 90;
   ctx.font = F.body(64, 400); ctx.fillStyle = T.muted;
   ctx.fillText(ellipsize(ctx, opts.subtitle, W - 2*M), M, y);
@@ -165,10 +173,10 @@ MM.renderPoster = function(opts){
   // ---- footer
   const fy = H - M;
   ctx.fillStyle = T.rule; ctx.fillRect(M, fy - footH + 40, W - 2*M, 3);
-  ctx.fillStyle = T.muted; ctx.font = F.mono(40, 500);
+  ctx.fillStyle = T.muted; ctx.font = F.body(40, 400);
   ctx.fillText(opts.url || "", M, fy - 20);
-  const date = new Date().toLocaleDateString("en-US", {month:"long", year:"numeric"}).toUpperCase();
-  ctx.textAlign = "right"; spacedRight(ctx, date, W - M, fy - 20, 6); ctx.textAlign = "left";
+  const date = new Date().toLocaleDateString("en-US", {month:"long", year:"numeric"});
+  ctx.textAlign = "right"; ctx.fillText(date, W - M, fy - 20); ctx.textAlign = "left";
   return cv;
 };
 function spacedRight(ctx, text, right, y, spacing){
