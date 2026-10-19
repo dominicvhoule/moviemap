@@ -127,7 +127,7 @@ MM.matchFilm = async function(title, year){
 // Full details for one TMDB id: director, Wikidata id, production countries.
 MM.filmDetails = async function(id){
   id = +id; if(!id) return null;
-  const cacheKey = "mm-tmdb4:" + id;
+  const cacheKey = "mm-tmdb5:" + id;
   const hit = lsGet(cacheKey, null); if(hit) return hit;
   const tv = MM.isTv(id);
   const d = await tmdb((tv ? "/tv/" : "/movie/") + Math.abs(id), {append_to_response:"external_ids,credits"});
@@ -136,7 +136,7 @@ MM.filmDetails = async function(id){
   const date = tv ? d.first_air_date : d.release_date;
   const out = {
     tmdb:tv ? -d.id : d.id, tv, t:tv ? d.name : d.title, ot:tv ? d.original_name : d.original_title, y:date ? +date.slice(0,4) : "",
-    d:dirs.slice(0,3).join(", "), poster:d.poster_path || null, ov:(d.overview || "").slice(0, 1200),
+    d:dirs.slice(0,3).join(", "), poster:d.poster_path || null, ov:(d.overview || "").slice(0, 1200), g:(d.genres || []).map(x=>x.id),
     qid:(d.external_ids && d.external_ids.wikidata_id) || null,
     pc:(d.production_countries||[]).map(c=>c.name),
     iso:[...(d.origin_country||[]), ...(d.production_countries||[]).map(c=>c.iso_3166_1)].filter(Boolean)
@@ -310,6 +310,48 @@ MM.resolveSettings = async function(dets, onStep, titles){
   });
   if(MM.saveRemoteSettings && Object.keys(fresh).length){ try{ await MM.saveRemoteSettings(fresh); }catch(e){} }
   return dets.map(d=>d ? (curated.get(d.tmdb) || MM.settingCache.get(d.tmdb)) : null);
+};
+
+/* ---------------- similar titles from a country ---------------- */
+// Country name → ISO code, built from the browser's own list of region names.
+let isoMap = null;
+const ISO_EXTRA = {"unitedstatesofamerica":"US","usa":"US","unitedkingdom":"GB","england":"GB","scotland":"GB","wales":"GB","southkorea":"KR","korea":"KR","northkorea":"KP","russia":"RU","sovietunion":"RU","czechia":"CZ","czechrepublic":"CZ","turkey":"TR","turkiye":"TR","vietnam":"VN","iran":"IR","syria":"SY","laos":"LA","bolivia":"BO","venezuela":"VE","tanzania":"TZ","moldova":"MD","palestine":"PS","taiwan":"TW","eastgermany":"DE","westgermany":"DE","nazigermany":"DE","demrepcongo":"CD","congo":"CG","ivorycoast":"CI","cotedivoire":"CI","bosniaandherz":"BA","dominicanrep":"DO","centralafricanrep":"CF","ssudan":"SS","macedonia":"MK","northmacedonia":"MK","eswatini":"SZ","eqguinea":"GQ","wsahara":"EH","solomonis":"SB","hongkong":"HK","macau":"MO"};
+MM.isoFor = function(name){
+  if(!name) return null;
+  if(!isoMap){
+    isoMap = Object.assign({}, ISO_EXTRA);
+    try{
+      const dn = new Intl.DisplayNames(["en"], {type:"region"});
+      for(let a=65; a<91; a++) for(let b=65; b<91; b++){
+        const code = String.fromCharCode(a, b);
+        try{ const n = dn.of(code); if(n && n !== code) isoMap[MM.norm(n)] = isoMap[MM.norm(n)] || code; }catch(e){}
+      }
+    }catch(e){}
+  }
+  return isoMap[MM.norm(name)] || isoMap[MM.norm(MM.geoName(name))] || isoMap[MM.norm(MM.displayCountry(name))] || null;
+};
+
+// Titles from the same country that share the film's genres, best known first.
+MM.similarFrom = async function(f, iso, exclude){
+  const tv = MM.isTv(f.tmdb);
+  let det = f.tmdb ? await MM.filmDetails(f.tmdb).catch(()=>null) : null;
+  if(!det && f.t){ const m = await MM.matchFilm(f.t, f.y).catch(()=>null); det = m ? await MM.filmDetails(m.id).catch(()=>null) : null; }
+  const genres = (det && det.g || []).slice(0, 2);
+  const key = `mm-sim:${iso}:${det ? det.tmdb : MM.filmKey(f)}`;
+  let list = lsGet(key, null);
+  if(!list){
+    const base = {with_origin_country: iso, sort_by: "vote_count.desc", include_adult: "false", "vote_count.gte": "20"};
+    const path = tv || (det && det.tv) ? "/discover/tv" : "/discover/movie";
+    const ask = async extra => ((await tmdb(path, Object.assign({}, base, extra))) || {}).results || [];
+    let res = genres.length ? await ask({with_genres: genres.join("|")}) : [];
+    if(res.length < 6) res = res.concat(await ask({}));
+    const isTvPath = path === "/discover/tv";
+    list = res.map(m=>({tmdb: isTvPath ? -m.id : m.id, t: isTvPath ? m.name : m.title, y: ((isTvPath ? m.first_air_date : m.release_date) || "").slice(0,4), poster: m.poster_path}))
+      .filter((m,i,a)=>m.poster && a.findIndex(x=>x.tmdb === m.tmdb) === i);
+    lsSet(key, list.slice(0, 20));
+  }
+  const skip = new Set([det && det.tmdb, f.tmdb].filter(Boolean));
+  return list.filter(m=>!skip.has(m.tmdb) && !(exclude && exclude(m))).slice(0, 6);
 };
 
 /* ---------------- avatar colour ---------------- */

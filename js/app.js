@@ -143,33 +143,55 @@ function buildLabels(){
     if(!label) return null;
     const part = largestPart(f.geometry); if(!part) return null;
     const p = path.centroid(part); if(!p || !isFinite(p[0])) return null;
-    return {name, label:label.toUpperCase(), x:p[0], y:p[1], area:path.area(part)};
+    const b = path.bounds(part);
+    // Spare spots inside the country (on a 5 x 5 grid), nearest the centre first, for when a pin sits on the centre.
+    const spots = [[0,0]];
+    for(let i=1; i<5; i++) for(let j=1; j<5; j++){
+      const x = b[0][0] + (b[1][0]-b[0][0]) * i/5, y = b[0][1] + (b[1][1]-b[0][1]) * j/5;
+      const ll = projection.invert([x, y]);
+      if(ll && d3.geoContains(part, ll)) spots.push([x - p[0], y - p[1]]);
+    }
+    spots.sort((a,c)=>Math.hypot(a[0],a[1]) - Math.hypot(c[0],c[1]));
+    return {name, label:label.toUpperCase(), x:p[0], y:p[1], area:path.area(part), bw:b[1][0] - b[0][0], bh:b[1][1] - b[0][1], spots};
   }).filter(Boolean).sort((a,b)=>b.area - a.area);
   gLabels.selectAll("text").data(labels, d=>d.name).join("text").attr("class","clabel").text(d=>d.label);
   updateLabels();
 }
+// Like a printed map: every country is named in a size that suits it, and a name only drops out
+// when there's no room for it at this zoom (it comes back as you zoom in).
 function updateLabels(){
   if(!labels.length) return;
   const visited = new Set(viewing.films.map(f=>MM.geoName(f.c)));
-  // Work in zoomed pixel space (the pan offset is the same for everything, so it can be ignored).
-  const pins = pinGroups.map(g=>[g.x * k, g.y * k, g.films.length > 1 ? 16 : 9]);
+  const pins = pinGroups.map(g=>[g.x * k, g.y * k, g.films.length > 1 ? 15 : 8]);
   const order = [...labels].sort((a,b)=>(visited.has(b.name) - visited.has(a.name)) || b.area - a.area);
-  const placed = [], offset = new Map();
+  const placed = [], shown = new Map();
   for(const d of order){
-    const w = d.label.length * 6.4 + 6, h = 12;
-    if(d.area * k * k < w * 12 * (visited.has(d.name) ? 1.1 : 2.2)) continue;   // country too small on screen for its name
+    const side = Math.sqrt(d.area) * k;                       // rough size of the country on screen
+    const fs = Math.max(7, Math.min(13, 6 + side / 16));      // bigger countries get bigger names
+    const w = d.label.length * fs * 0.64 + 2, h = fs + 2;
+    const room = Math.max(d.bw * k * 1.35, side * 1.6);       // a name may spill a little past a narrow country
+    if(w > room || d.bh * k < fs * 0.6) continue;
     const cx = d.x * k, cy = d.y * k;
-    for(const off of [0, 16, -16]){
-      const box = [cx - w/2, cy + off - h/2, cx + w/2, cy + off + h/2];
-      const onPin = pins.some(([px,py,r])=>px > box[0]-r && px < box[2]+r && py > box[1]-r && py < box[3]+r);
-      const onLabel = placed.some(o=>!(box[2] < o[0] || box[0] > o[2] || box[3] < o[1] || box[1] > o[3]));
-      if(!onPin && !onLabel){ placed.push(box); offset.set(d.name, off); break; }
+    // Try the centre first, then nearby spots inside big countries, so pins don't knock names off.
+    const dy = h + 4;
+    const spots = [[0,0],[0,dy],[0,-dy], ...d.spots.slice(1).map(([sx,sy])=>[sx * k, sy * k])];
+    let best = null;
+    for(const [ox, oy] of spots){
+      const box = [cx + ox - w/2, cy + oy - h/2, cx + ox + w/2, cy + oy + h/2];
+      const onPin = pins.filter(([px,py,r])=>px > box[0]-r && px < box[2]+r && py > box[1]-r && py < box[3]+r).length;
+      const onLabel = placed.some(o=>!(box[2] + 2 < o[0] || box[0] - 2 > o[2] || box[3] < o[1] || box[1] > o[3]));
+      if(onLabel) continue;
+      if(!onPin){ best = {box, ox, oy, fs}; break; }
+      if(!best || onPin < best.pins) best = {box, ox, oy, fs, pins:onPin};
     }
+    // Countries with films always keep their name, even if a pin has to sit on part of it.
+    if(best && (!best.pins || visited.has(d.name) || side > 120)){ placed.push(best.box); shown.set(d.name, best); }
   }
   gLabels.selectAll("text")
-    .attr("display", d=>offset.has(d.name) ? null : "none")
+    .attr("display", d=>shown.has(d.name) ? null : "none")
+    .attr("font-size", d=>shown.has(d.name) ? shown.get(d.name).fs : null)
     .classed("visited", d=>visited.has(d.name))
-    .attr("transform", d=>`translate(${d.x},${d.y + (offset.get(d.name)||0)/k}) scale(${1/k})`);
+    .attr("transform", d=>{ const s = shown.get(d.name) || {}; return `translate(${d.x + (s.ox||0)/k},${d.y + (s.oy||0)/k}) scale(${1/k})`; });
 }
 const zoom = d3.zoom().scaleExtent([1,40]).on("zoom", ev=>{
   gRoot.attr("transform", ev.transform); k = ev.transform.k;
@@ -287,7 +309,9 @@ function openFilm(f, fly){
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${f.r ? `<span class="stars">${stars(f.r)}</span>` : ""}${f.rv ? '<span class="tag">Reviewed</span>' : ""}${isSeries(f) ? '<span class="tag tv">Series</span>' : ""}${f.ap ? '<span class="tag ap">Approx. setting</span>' : ""}${f.watched ? `<span class="tag" style="color:var(--muted)">Watched ${esc(f.watched)}</span>` : ""}</div>
       ${mine ? `<div class="cta"><button class="btn ghost small" id="d-move">Move pin</button><button class="btn ghost small" id="d-del">Remove</button></div>` : ""}
       ${f.tmdb ? `<a class="linkbtn" href="${MM.tmdbPage(f.tmdb)}" target="_blank" rel="noopener">${MM.isTv(f.tmdb) ? "Series" : "Film"} page on TMDB ↗</a>` : ""}
+      <div class="more" id="more" hidden></div>
     </div>`;
+  showSimilar(f);
   detail.querySelector(".x").onclick = closeDetail;
   if(!direct) MM.posterFor(f).then(url=>{
     if(!url || selected !== f) return;
@@ -309,6 +333,20 @@ function openFilm(f, fly){
   }
   if(fly) flyTo(f);
   renderPins(); markListSelection();
+}
+// "More from Argentina": similar titles from the country this one is set in. Tap one to log it.
+async function showSimilar(f){
+  const iso = MM.isoFor(f.c); if(!iso) return;
+  const ids = new Set(myFilms.map(x=>x.tmdb).filter(Boolean)), keys = myKeys();
+  let list = [];
+  try{ list = await MM.similarFrom(f, iso, m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))); }catch(e){ return; }
+  const box = $("#more");
+  if(!box || selected !== f || !list.length) return;
+  box.hidden = false;
+  box.innerHTML = `<b class="sub" style="font-size:15px">More from ${esc(f.c)}</b>
+    <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
+    <p class="hint" style="font-size:12px">Tap one to add it to your map.</p>`;
+  box.querySelectorAll("button").forEach(b=>b.onclick = ()=>{ const m = list[+b.dataset.i]; pendingLog = {tmdb:m.tmdb, t:m.t, y:m.y}; location.hash = "#/log"; });
 }
 function closeDetail(){ detail.hidden = true; selected = null; renderPins(); markListSelection(); }
 
@@ -687,8 +725,10 @@ function maybeAutoSync(){
   if(!me.letterboxd) return;
   const last = MM.lsGet(lbSyncKey(), 0);
   const rep = MM.lsGet(lbReportKey(), null);
-  // First time on this browser without a full read yet: read everything once.
-  if(Date.now() - last > LB_SYNC_EVERY) syncLetterboxd({quiet:true, full: !(rep && rep.full)});
+  // Quick check (diary + newest page) every 6 hours; a full re-read of the whole list once a week.
+  const lastFull = MM.lsGet(lbSyncKey() + ":full", 0);
+  const full = !(rep && rep.full) || Date.now() - lastFull > 7*24*60*60*1000;
+  if(full || Date.now() - last > LB_SYNC_EVERY) syncLetterboxd({quiet:true, full}).then(r=>{ if(full && r && !r.error) MM.lsSet(lbSyncKey() + ":full", Date.now()); });
 }
 
 let lbEditing = false;   // the linked profile stays locked until "Change profile" is clicked
@@ -706,9 +746,9 @@ function renderImport(){
     ${lb && !lbEditing ? `
     <div class="linked">
       <div style="min-width:0"><small>Linked profile</small><b><a href="https://letterboxd.com/${esc(lb)}/" target="_blank" rel="noopener">letterboxd.com/${esc(lb)}</a></b></div>
-      <div class="cta"><button class="btn" type="button" id="lbsync">Sync now</button><button class="btn ghost" type="button" id="lbchange">Change profile</button></div>
+      <div class="cta"><button class="btn ghost" type="button" id="lbchange">Change profile</button></div>
     </div>
-    <p class="hint" id="lbs">${last ? "Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : "Not synced yet."}</p>`
+    <p class="hint" id="lbs">New films are added automatically.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}</p>`
     : `
     <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${lbEditing ? "" : esc(lb||"")}"><button class="btn" type="submit">Connect</button>${lbEditing ? `<button class="btn ghost" type="button" id="lbcancel">Cancel</button>` : ""}</form>
     <p class="hint" id="lbs">${lbEditing ? `Currently linked to letterboxd.com/${esc(lb)}. Films already on your map stay there.` : "Your Letterboxd profile needs to be public."}</p>`}
@@ -717,18 +757,9 @@ function renderImport(){
       ${missing.length ? `<p class="hint">We couldn't work out where ${missing.length===1 ? "this one takes" : "these take"} place. Tap Place it to pin ${missing.length===1 ? "it" : "each one"} yourself.</p>
       <ul class="results">${missing.map((m,i)=>`<li><button data-i="${i}"><span class="th" ${m.poster ? `style="background-image:url('${MM.poster(m.poster,"w92")}')"` : ""}></span><span style="min-width:0"><b>${esc(m.t)} <span class="m">${esc(m.y)}</span></b><span class="m" style="color:var(--rust)">Place it →</span></span></button></li>`).join("")}</ul>` : ""}
     </div>` : ""}
-    <p class="hint">Sync now reads your whole Letterboxd films list, which takes a minute for big libraries. Your profile has to be public. Anything that doesn't come through can be added with <a href="#/log">Log a film</a>.</p>`
+    <p class="hint">Connecting reads your whole Letterboxd films list, which takes a minute for big libraries. After that MovieMap checks for new films by itself. Your profile has to be public. Anything that doesn't come through can be added with <a href="#/log">Log a film</a>.</p>`
     : `<p class="notice">${sb ? '<a href="#/account">Sign in</a> to connect your Letterboxd username.' : "Accounts aren't switched on for this site yet."}</p>`}`;
   el.querySelectorAll(".results button").forEach(b=>b.onclick = ()=>{ pendingLog = missing[+b.dataset.i]; location.hash = "#/log"; });
-  const runSync = async (btn)=>{
-    const s = $("#lbs"); btn.disabled = true; s.classList.add("busy"); s.textContent = "Checking your Letterboxd profile…";
-    try{
-      const r = await syncLetterboxd({full:true, progress: msg=>{ s.textContent = msg; }});
-      if(r && !r.error) renderImport();
-      else { s.classList.remove("busy"); s.textContent = (r && LB_ERRORS[r.error]) || "Sync didn't go through. Try again."; }
-    }finally{ btn.disabled = false; }
-  };
-  const sy = $("#lbsync"); if(sy) sy.onclick = ()=>runSync(sy);
   const ch = $("#lbchange"); if(ch) ch.onclick = ()=>{ lbEditing = true; renderImport(); $("#lbu").focus(); };
   const cc = $("#lbcancel"); if(cc) cc.onclick = ()=>{ lbEditing = false; renderImport(); };
   const f = $("#lbf");

@@ -52,7 +52,7 @@ a:hover{color:var(--red)}
 .country.visited{fill:var(--visited)}
 .grat{fill:none;stroke:var(--graticule);stroke-width:.6;vector-effect:non-scaling-stroke}
 .sphere{fill:var(--ocean)}
-.clabel{font-family:var(--f);font-size:9.5px;font-weight:500;letter-spacing:.01em;fill:var(--muted);text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.clabel{font-family:var(--f);font-size:9px;font-weight:500;letter-spacing:.02em;fill:var(--muted);text-anchor:middle;dominant-baseline:central;pointer-events:none}
 .clabel.visited{fill:var(--label-on-visited);font-weight:700}
 .pin{cursor:pointer}
 .pin circle.dot{fill:var(--pin);stroke:var(--pin-ring);stroke-width:2;vector-effect:non-scaling-stroke}
@@ -100,6 +100,15 @@ a:hover{color:var(--red)}
 .tag{display:inline-block;font-size:11px;font-weight:500;padding:2px 7px;border:1px solid currentColor;color:var(--ink)}
 .tag.ap{color:var(--red)}
 .stars{color:var(--red);letter-spacing:.04em}
+
+.more{display:grid;gap:8px;border-top:1px solid var(--rule);padding-top:12px;margin-top:4px}
+.more ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 10px}
+.more button{display:grid;gap:3px;width:100%;background:none;border:0;padding:0;text-align:left;cursor:pointer}
+.more .th{display:block;width:100%;aspect-ratio:2/3;background:var(--land) center/cover no-repeat}
+.more .t{font-size:12px;font-weight:700;line-height:1.2;letter-spacing:-.01em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.more .y{font-size:11px;color:var(--muted)}
+.more button:hover .t{color:var(--red)}
+.more button:hover .th{outline:2px solid var(--red);outline-offset:-2px}
 
 /* ---------- right column ---------- */
 .rail{border-left:1px solid var(--rule);background:var(--paper);display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
