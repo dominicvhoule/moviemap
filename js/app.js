@@ -691,6 +691,7 @@ function maybeAutoSync(){
   if(Date.now() - last > LB_SYNC_EVERY) syncLetterboxd({quiet:true, full: !(rep && rep.full)});
 }
 
+let lbEditing = false;   // the linked profile stays locked until "Change profile" is clicked
 function renderImport(){
   showMine_keepView();
   const el = $("#import");
@@ -702,8 +703,15 @@ function renderImport(){
   el.innerHTML = `<h2 class="h">Letterboxd</h2>
     <p class="hint">Connect your Letterboxd username and every film you've watched shows up on your map. New ones are added automatically when you open MovieMap. It reads your public Letterboxd profile, so there's no password involved.</p>
     ${cloud() ? `
-    <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${esc(lb||"")}"><button class="btn" type="submit">${lb ? "Sync now" : "Connect"}</button></form>
-    <p class="hint" id="lbs">${lb ? `Linked to <a href="https://letterboxd.com/${esc(lb)}/" target="_blank" rel="noopener">letterboxd.com/${esc(lb)}</a>.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}` : "Your Letterboxd profile needs to be public."}</p>
+    ${lb && !lbEditing ? `
+    <div class="linked">
+      <div style="min-width:0"><small>Linked profile</small><b><a href="https://letterboxd.com/${esc(lb)}/" target="_blank" rel="noopener">letterboxd.com/${esc(lb)}</a></b></div>
+      <div class="cta"><button class="btn" type="button" id="lbsync">Sync now</button><button class="btn ghost" type="button" id="lbchange">Change profile</button></div>
+    </div>
+    <p class="hint" id="lbs">${last ? "Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : "Not synced yet."}</p>`
+    : `
+    <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${lbEditing ? "" : esc(lb||"")}"><button class="btn" type="submit">Connect</button>${lbEditing ? `<button class="btn ghost" type="button" id="lbcancel">Cancel</button>` : ""}</form>
+    <p class="hint" id="lbs">${lbEditing ? `Currently linked to letterboxd.com/${esc(lb)}. Films already on your map stay there.` : "Your Letterboxd profile needs to be public."}</p>`}
     ${rep ? `<div class="box">
       <p class="ok" style="margin:0"><b>${rep.total} title${rep.total===1?"":"s"}</b> on your Letterboxd${missing.length ? `, <b>${missing.length}</b> still need${missing.length===1?"s":""} a pin` : ", all on your map"}.</p>
       ${missing.length ? `<p class="hint">We couldn't work out where ${missing.length===1 ? "this one takes" : "these take"} place. Tap Place it to pin ${missing.length===1 ? "it" : "each one"} yourself.</p>
@@ -712,6 +720,17 @@ function renderImport(){
     <p class="hint">Sync now reads your whole Letterboxd films list, which takes a minute for big libraries. Your profile has to be public. Anything that doesn't come through can be added with <a href="#/log">Log a film</a>.</p>`
     : `<p class="notice">${sb ? '<a href="#/account">Sign in</a> to connect your Letterboxd username.' : "Accounts aren't switched on for this site yet."}</p>`}`;
   el.querySelectorAll(".results button").forEach(b=>b.onclick = ()=>{ pendingLog = missing[+b.dataset.i]; location.hash = "#/log"; });
+  const runSync = async (btn)=>{
+    const s = $("#lbs"); btn.disabled = true; s.classList.add("busy"); s.textContent = "Checking your Letterboxd profile…";
+    try{
+      const r = await syncLetterboxd({full:true, progress: msg=>{ s.textContent = msg; }});
+      if(r && !r.error) renderImport();
+      else { s.classList.remove("busy"); s.textContent = (r && LB_ERRORS[r.error]) || "Sync didn't go through. Try again."; }
+    }finally{ btn.disabled = false; }
+  };
+  const sy = $("#lbsync"); if(sy) sy.onclick = ()=>runSync(sy);
+  const ch = $("#lbchange"); if(ch) ch.onclick = ()=>{ lbEditing = true; renderImport(); $("#lbu").focus(); };
+  const cc = $("#lbcancel"); if(cc) cc.onclick = ()=>{ lbEditing = false; renderImport(); };
   const f = $("#lbf");
   if(f) f.onsubmit = async ev=>{
     ev.preventDefault();
@@ -726,10 +745,12 @@ function renderImport(){
         const {error} = await sb.from("profiles").update({letterboxd:name}).eq("id", me.id);
         if(error){ s.classList.remove("busy"); s.textContent = "Couldn't save your username. Try again."; return; }
         me.letterboxd = name;
+        MM.lsSet(lbReportKey(), null);   // the old profile's report no longer applies
       }
+      lbEditing = false;
       const r = await syncLetterboxd({full:true, progress: msg=>{ s.textContent = msg; }});
-      if(r && !r.error) renderImport();
-      else { s.classList.remove("busy"); s.textContent = (r && LB_ERRORS[r.error]) || "Sync didn't go through. Try again."; }
+      renderImport();   // back to the locked, linked view either way
+      if(!r || r.error){ const s2 = $("#lbs"); if(s2) s2.textContent = (r && LB_ERRORS[r.error]) || "Sync didn't go through. Try again."; }
     }finally{ btn.disabled = false; }
   };
 }
@@ -933,7 +954,7 @@ function renderAccount(){
     <form id="pf" style="display:grid;gap:12px">
       <label class="field" for="p-name">Display name<input id="p-name" maxlength="40" value="${esc(p.display_name)}"></label>
       <label class="field" for="p-bio">Bio<textarea id="p-bio" maxlength="160" rows="2">${esc(p.bio)}</textarea></label>
-      <label class="field" for="p-lb">Letterboxd username<input id="p-lb" maxlength="30" value="${esc(p.letterboxd||"")}" placeholder="shown on your profile"></label>
+      <div class="field">Letterboxd<span style="font-weight:400;font-size:15px">${p.letterboxd ? `<a href="https://letterboxd.com/${esc(p.letterboxd)}/" target="_blank" rel="noopener">letterboxd.com/${esc(p.letterboxd)}</a> · <a href="#/import">Change on the Letterboxd tab</a>` : `Not linked · <a href="#/import">Connect on the Letterboxd tab</a>`}</span></div>
       <div class="box">
         <b class="sub" style="font-size:16px">Find friends from contacts</b>
         <label class="check" for="p-disc"><input type="checkbox" id="p-disc" ${p.discoverable ? "checked" : ""}> Let friends who have my email or phone number find me</label>
@@ -949,10 +970,8 @@ function renderAccount(){
   $("#pf").onsubmit = async ev=>{
     ev.preventDefault();
     const e = $("#p-err"); e.hidden = true;
-    const lb = $("#p-lb").value.trim().replace(/^@/,"").replace(/^https?:\/\/(www\.)?letterboxd\.com\//,"").replace(/\/.*$/,"");
-    if(lb && !/^[A-Za-z0-9_]{1,30}$/.test(lb)){ e.textContent = "That Letterboxd username has characters Letterboxd doesn't allow."; e.hidden = false; return; }
     const disc = $("#p-disc").checked;
-    const patch = {display_name:$("#p-name").value.trim(), bio:$("#p-bio").value.trim(), letterboxd: lb || null, discoverable: disc};
+    const patch = {display_name:$("#p-name").value.trim(), bio:$("#p-bio").value.trim(), discoverable: disc};   // the Letterboxd link is managed on the Letterboxd tab
     const {error} = await sb.from("profiles").update(patch).eq("id", me.id);
     if(error){ e.textContent = "Couldn't save. Try again."; e.hidden = false; return; }
     try{

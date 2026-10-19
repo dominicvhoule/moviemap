@@ -104,7 +104,8 @@ a:hover{color:var(--red)}
 /* ---------- right column ---------- */
 .rail{border-left:1px solid var(--rule);background:var(--paper);display:flex;flex-direction:column;min-height:0;min-width:0;overflow:hidden}
 .panel{display:flex;flex-direction:column;min-height:0;flex:1;overflow:auto}
-.pad{padding:24px;display:grid;gap:16px;align-content:start}
+.pad{padding:24px;display:grid;grid-template-columns:minmax(0,1fr);gap:16px;align-content:start}
+.pad>*{min-width:0}
 .profile{padding:24px 24px 20px;border-bottom:1px solid var(--rule);display:grid;gap:18px}
 .who{display:flex;gap:14px;align-items:center;min-width:0}
 .avatar{width:48px;height:48px;border-radius:0;display:grid;place-items:center;font-weight:700;font-size:22px;color:var(--paper);background:var(--ink)!important;flex:none;text-transform:uppercase}
@@ -205,6 +206,13 @@ a:hover{color:var(--red)}
 .notice{border-left:4px solid var(--red);background:none;padding:2px 0 2px 12px;font-size:14px}
 .toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--paper);padding:10px 16px;font-weight:500;z-index:20;max-width:calc(100% - 32px)}
 .sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+
+/* linked Letterboxd profile */
+.linked{display:grid;gap:12px;border-top:1px solid var(--rule);border-bottom:1px solid var(--line);padding:14px 0}
+.linked small{display:block;font-size:12px;color:var(--muted)}
+.linked b{display:block;font-size:22px;letter-spacing:-.03em;overflow-wrap:anywhere}
+.linked b a{text-decoration:none}
+.linked b a:hover{color:var(--red)}
 
 /* poster panel */
 .pv{background:var(--land);padding:16px;display:grid;place-items:center}
