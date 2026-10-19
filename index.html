@@ -7,7 +7,7 @@
 <meta name="description" content="Log the films you watch and see where each one takes place on a world map.">
 <meta name="theme-color" content="#FFFFFF">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%23E4002B'/%3E%3C/svg%3E">
-<link rel="stylesheet" href="styles.css?v=202610191658">
+<link rel="stylesheet" href="styles.css?v=202610191659">
 </head>
 <body>
 <header class="mast">
@@ -28,7 +28,7 @@
   <section class="mapwrap" aria-label="Map">
     <svg id="map" role="img" aria-label="World map of film settings"></svg>
     <div class="mapbar">
-      <div class="whose"><small id="whose-k">Featured map</small><h2 id="whose-h">MovieMap</h2></div>
+      <div class="whose"><small id="whose-k">Loading</small><h2 id="whose-h">Your map</h2></div>
       <div class="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zout" aria-label="Zoom out">−</button><button id="zfit" aria-label="Fit all pins">⤢</button></div>
     </div>
     <div class="pickhint" id="pickhint" hidden>Tap the map where the film takes place</div>
@@ -41,13 +41,13 @@
     <div class="panel" id="view-map">
       <div class="profile">
         <div class="who"><div class="avatar" id="av"></div><div style="min-width:0"><h1 id="uname"></h1><p id="ubio"></p></div></div>
-        <div class="stats"><div><b id="s-films">0</b><span>Films</span></div><div><b id="s-series">0</b><span>Series</span></div><div><b id="s-ctry">0</b><span>Countries</span></div><div><b id="s-cont">0</b><span>Continents</span></div></div>
+        <div class="stats"><div><b id="s-films">–</b><span>Films</span></div><div><b id="s-series">–</b><span>Series</span></div><div><b id="s-ctry">–</b><span>Countries</span></div><div><b id="s-cont">–</b><span>Continents</span></div></div>
         <p class="overlap" id="overlap" hidden></p>
         <div class="cta" id="cta"></div>
       </div>
       <div class="listhead"><h4>Logbook</h4><input id="q" type="search" placeholder="Filter" aria-label="Filter films or places"></div>
       <div class="kinds" role="tablist" aria-label="Show"><button role="tab" data-k="all" aria-selected="true">All</button><button role="tab" data-k="film" aria-selected="false">Films</button><button role="tab" data-k="series" aria-selected="false">Series</button></div>
-      <ul class="films" id="films"></ul>
+      <ul class="films" id="films"><li class="empty">Loading films…</li></ul>
     </div>
     <div class="panel" id="view-explore" hidden><div class="pad" id="explore"></div></div>
     <div class="panel" id="view-log" hidden><div class="pad" id="log"></div></div>
@@ -62,11 +62,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/topojson/3.0.2/topojson.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
-<script src="config.js?v=202610191658"></script>
-<script src="js/featured.js?v=202610191658"></script>
-<script src="js/data.js?v=202610191658"></script>
-<script src="js/wikiplot.js?v=202610191658"></script>
-<script src="js/poster.js?v=202610191658"></script>
-<script src="js/app.js?v=202610191658"></script>
+<script src="config.js?v=202610191659"></script>
+<script src="js/featured.js?v=202610191659"></script>
+<script src="js/data.js?v=202610191659"></script>
+<script src="js/wikiplot.js?v=202610191659"></script>
+<script src="js/poster.js?v=202610191659"></script>
+<script src="js/app.js?v=202610191659"></script>
 </body>
 </html>
