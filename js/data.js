@@ -47,6 +47,7 @@ MM.fixContinent = c => CONTINENT_FIX[c] || c || "";
 // Filled by the app once the world geometry loads: geo name → [lon, lat] of the country's largest landmass.
 MM.centroids = {};
 MM.setWorld = function(features){
+  MM.worldFeatures = features;
   features.forEach(f=>{
     let g = f.geometry;
     if(g && g.type==="MultiPolygon"){
@@ -276,7 +277,8 @@ MM.curated = function(det, entryTitle){
 MM.resolveSettings = async function(dets, onStep, titles){
   const curated = new Map();
   dets.forEach((d,i)=>{ if(!d) return; const c = MM.curated(d, titles && titles[i]); if(c) curated.set(d.tmdb, c); });
-  const weakCached = s => s && s.src === "production" && MM.aiSetting && !s.aiTried;
+  // A cached country guess gets another try with each step that hasn't had a go at it yet.
+  const weakCached = s => s && s.src === "production" && ((MM.wikiPlotSetting && !s.wikiTried) || (MM.aiSetting && !s.aiTried));
   const need = dets.filter(d=>d && !curated.has(d.tmdb) && (!MM.settingCache.get(d.tmdb) || weakCached(MM.settingCache.get(d.tmdb))));
   if(MM.remoteSettings && need.length){
     // Only trust shared entries that came from a recorded setting; country fallbacks get re-checked.
@@ -292,17 +294,18 @@ MM.resolveSettings = async function(dets, onStep, titles){
     if(w && !w.weak){ MM.settingCache.put(d.tmdb, w); fresh[d.tmdb] = w; }
     else noRecord.push(d);
   });
-  // 2) AI reads the plot  3) otherwise the film's country
+  // 2) places linked in the Wikipedia plot (free)  3) AI reads the plot, if switched on  4) otherwise the film's country
   let done = 0;
   await MM.pool(noRecord, 2, async d=>{
     let s = null;
-    if(MM.aiSetting){ try{ s = await MM.aiSetting(d); }catch(e){} }
+    if(MM.wikiPlotSetting){ try{ s = await MM.wikiPlotSetting(d); }catch(e){} }
+    if(!s && MM.aiSetting){ try{ s = await MM.aiSetting(d); }catch(e){} }
     if(!s){
       const w = d.qid && wd[d.qid];
       s = MM.fallbackSetting(d) || w || null;
-      if(s && MM.aiSetting) s = Object.assign({}, s, {aiTried:1});
+      if(s) s = Object.assign({}, s, {wikiTried: MM.wikiPlotSetting ? 1 : 0, aiTried: MM.aiSetting ? 1 : 0});
     }
-    if(s){ MM.settingCache.put(d.tmdb, s); if(s.src !== "ai") fresh[d.tmdb] = s; }
+    if(s){ MM.settingCache.put(d.tmdb, s); if(s.src === "production" || s.src === "wikidata") fresh[d.tmdb] = s; }
     done++; if(onStep) onStep(done, noRecord.length);
   });
   if(MM.saveRemoteSettings && Object.keys(fresh).length){ try{ await MM.saveRemoteSettings(fresh); }catch(e){} }

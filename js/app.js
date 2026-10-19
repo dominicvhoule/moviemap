@@ -657,7 +657,7 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
   }finally{ syncing = false; }
 }
 // Re-check pins that were only country guesses (or have a hand-checked setting now). Pins you moved yourself are left alone.
-const FIX_VERSION = "mm-fix-v3:";
+const FIX_VERSION = "mm-fix-v4:";
 async function refreshSettings(force){
   if(!cloud()) return;
   const flag = FIX_VERSION + me.id;
@@ -677,7 +677,7 @@ async function refreshSettings(force){
     try{ await Store.update(f, {p:s.p, c:s.c, cont:s.cont||"", lat:s.lat, lon:s.lon, ap:s.ap, n:s.n||"", src:s.src}); changed++; }catch(e){}
   }
   // Keep re-checking on later visits until the AI step is available, so guesses get upgraded once it's switched on.
-  if(aiState === "on" || !MM.aiSetting) MM.lsSet(flag, true);
+  MM.lsSet(flag, true);
   if(changed && viewing.mine){ renderAll(); fitPins(true); toast(`Moved ${changed} pin${changed===1?"":"s"} to a better spot`); }
 }
 function maybeAutoSync(){

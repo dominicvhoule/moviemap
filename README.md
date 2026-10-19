@@ -18,7 +18,8 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 |---|---|
 | Titles, years, directors, posters | [TMDB](https://www.themoviedb.org/) API (key in `config.js`) |
 | Where a film takes place | [Wikidata](https://www.wikidata.org/) "narrative location" (P840) |
-| When Wikidata has no setting | Claude reads the Wikipedia plot and TMDB description (`film-setting` function) |
+| When Wikidata has no setting | The places linked in the title's Wikipedia plot, weighted by how often and how early they're mentioned (free, runs in the browser) |
+| Optional AI step | Claude reads the Wikipedia plot and TMDB description (`film-setting` function, needs an API key) |
 | Last resort | The film's country of origin (TMDB, then Wikidata), marked approximate |
 | Accounts, maps, follows | [Supabase](https://supabase.com/) (optional, see below) |
 
@@ -47,6 +48,8 @@ styles.css          all styles (phone layout at the bottom)
 config.js           TMDB key + Supabase settings
 js/featured.js      Grant's hand-checked starter map, shown to signed-out visitors
 js/data.js          TMDB and Wikidata lookups
+js/wikiplot.js      reads the places linked in a Wikipedia plot
+js/poster.js        printable poster
 js/app.js           map, logbook, logging, import, accounts, people
 data/world.json     country shapes (Natural Earth via world-atlas)
 supabase/schema.sql database tables and access rules
@@ -59,6 +62,6 @@ supabase/migrations/                         database changes to run after the f
 
 - **Letterboxd**: there's no sign-in yet (Letterboxd's API is invitation-only). Sync reads public profile pages, so it only works for public profiles and can break if Letterboxd changes its page layout. Reading pages this way may not be allowed under Letterboxd's terms; switch to the official API once access is granted.
 - **Contacts on iPhone**: Safari doesn't let websites read contacts. iPhone users can share an invite link or search by username instead.
-- **Settings**: Wikidata has gaps for new and small films; those go to the AI step, which can be wrong for titles with little written about them. Move pin always wins, and moved pins are never overwritten.
+- **Settings**: Wikidata has gaps for new and small films. The Wikipedia step picks the most-mentioned linked place, so a plot that passes through a city can land there; titles without linked places fall back to AI (if set up) or the country. Move pin always wins, and moved pins are never overwritten.
 
 This product uses the TMDB API but is not endorsed or certified by TMDB.
