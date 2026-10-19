@@ -1020,7 +1020,12 @@ let aiState = "unknown";   // unknown | on | off
 async function aiFor(d){
   if(aiState === "off" || !cloud()) return null;
   const {data, error} = await sb.functions.invoke("film-setting", {body:{tmdb:d.tmdb, title:d.t, year:d.y || null, qid:d.qid || null, overview:d.ov || "", tv:MM.isTv(d.tmdb)}});
-  if(error){ if(error.context && error.context.status === 404) aiState = "off"; return null; }   // function not deployed
+  if(error){
+    // Not deployed (404, or the browser blocks the request outright): stop asking for the rest of this visit.
+    const status = error.context && error.context.status;
+    if(!status || status === 404 || error.name === "FunctionsFetchError" || error.name === "FunctionsRelayError") aiState = "off";
+    return null;
+  }
   if(data && data.reason === "no_api_key"){ aiState = "off"; return null; }
   aiState = "on";
   return data && data.setting || null;
