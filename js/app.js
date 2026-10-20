@@ -415,8 +415,9 @@ function flyTo(f){
   const el = map.getContainer(), W = el.clientWidth, H = el.clientHeight;
   const phone = window.innerWidth <= 860 || W < 560;
   const cardW = Math.min(380, W - 48) + 24;
-  const padding = phone ? {top:0, left:0, right:0, bottom:Math.round(H * 0.45)} : {top:0, left:0, bottom:0, right:cardW};
-  map.flyTo({center:[f.lon, f.lat], zoom:Math.max(map.getZoom(), 5), duration:900, essential:true, padding});
+  // (an offset, not camera padding, so later moves like "fit all pins" aren't shifted)
+  const offset = phone ? [0, -Math.round(H * 0.22)] : [-Math.round(cardW / 2), 0];
+  map.flyTo({center:[f.lon, f.lat], zoom:Math.max(map.getZoom(), 5), duration:900, essential:true, offset});
 }
 function startPicking(cb){ picking = cb; $("#map").classList.add("picking"); $("#pickhint").hidden = false; if(window.innerWidth <= 860) $(".mapwrap").scrollIntoView({behavior:"smooth", block:"start"}); }
 
