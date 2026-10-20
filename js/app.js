@@ -680,7 +680,8 @@ async function renderStats(){
       <div><b>${groups.length}</b><span>countries, ${Math.round(groups.length * 100 / 195)}% of the world</span></div>
       <div><b>${conts.size}</b><span>continent${conts.size===1?"":"s"}</span></div>
       <div><b id="st-home">–</b><span>made in the country they're set in</span></div>
-      <div><b>${topPlace ? esc(topPlace[0]) : "–"}</b><span>${topPlace ? `most-visited place, ${topPlace[1]} title${topPlace[1]===1?"":"s"}` : "most-visited place"}</span></div>
+      ${topPlace && topPlace[1] >= 2 ? `<div><b>${esc(topPlace[0])}</b><span>most-visited place, ${topPlace[1]} titles</span></div>`
+        : `<div><b>${esc(groups[0].name)}</b><span>top country, ${pct(groups[0].films.length)}% of titles</span></div>`}
     </div>
     <h3 class="csec">Where your titles are set <span>% of ${n}</span></h3>${bars(ctryRows, top[0].films.length)}
     ${contRows.length ? `<h3 class="csec">By continent</h3>${bars(contRows, contRows[0].v)}` : ""}

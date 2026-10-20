@@ -34,6 +34,7 @@ const GEO_ALIASES = {
   "england":"United Kingdom","scotland":"United Kingdom","wales":"United Kingdom","northern ireland":"United Kingdom","great britain":"United Kingdom",
   "kingdom of italy":"Italy","francoist spain":"Spain","second spanish republic":"Spain","yugoslavia":"Serbia",
   "south korea":"South Korea","republic of korea":"South Korea","north korea":"North Korea","korea":"South Korea",
+  "irish free state":"Ireland","republic of ireland":"Ireland","ottoman empire":"Turkey","kingdom of france":"France","french third republic":"France","vichy france":"France",
   "viet nam":"Vietnam","türkiye":"Turkey","turkiye":"Turkey","myanmar":"Myanmar","burma":"Myanmar","cabo verde":"Cape Verde"
 };
 // Display names: keep Wikidata's label except for a few long official forms.
