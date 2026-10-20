@@ -408,9 +408,15 @@ function fitPins(animate){
   const pad = Math.min(60, Math.max(24, map.getContainer().clientWidth / 14));
   map.fitBounds(b, {padding:{top:pad + 50, bottom:pad + 30, left:pad, right:pad}, maxZoom:6, duration: animate ? 700 : 0});
 }
+// Centre a place in the part of the map the film card leaves uncovered: to the left of the card on a
+// wide screen, above it on a phone (where the card slides up from the bottom).
 function flyTo(f){
   if(!mapReady || !isFinite(f.lat)) return;
-  map.flyTo({center:[f.lon, f.lat], zoom:Math.max(map.getZoom(), 5), duration:900, essential:true});
+  const el = map.getContainer(), W = el.clientWidth, H = el.clientHeight;
+  const phone = window.innerWidth <= 860 || W < 560;
+  const cardW = Math.min(380, W - 48) + 24;
+  const padding = phone ? {top:0, left:0, right:0, bottom:Math.round(H * 0.45)} : {top:0, left:0, bottom:0, right:cardW};
+  map.flyTo({center:[f.lon, f.lat], zoom:Math.max(map.getZoom(), 5), duration:900, essential:true, padding});
 }
 function startPicking(cb){ picking = cb; $("#map").classList.add("picking"); $("#pickhint").hidden = false; if(window.innerWidth <= 860) $(".mapwrap").scrollIntoView({behavior:"smooth", block:"start"}); }
 
