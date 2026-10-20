@@ -112,153 +112,67 @@ const myKeys = () => new Set(myFilms.map(MM.filmKey));
 const POSTERS = false;
 
 /* ================= map ================= */
-const svg = d3.select("#map");
-const gRoot = svg.append("g"), gLand = gRoot.append("g"), gLabels = gRoot.append("g").attr("aria-hidden","true"), gPins = gRoot.append("g");
-let countries = [], projection, path, W = 0, H = 0, k = 1;
+// A real street map (MapLibre + OpenFreeMap tiles, free and keyless) styled like Google Maps:
+// green land, blue water, place names that get more detailed as you zoom, and round "saved place"
+// pins. Countries with a film get a faint tint. Pins close together on screen merge into one with
+// a count, and split apart as you zoom in.
+let countries = [];
 let viewing = {owner:null, films:[], mine:false};   // what the map shows
 let selected = null, picking = null, preview = null;
+let map = null, mapReady = false, markers = [], previewMarker = null;
+const MAP_STYLE = "https://tiles.openfreemap.org/styles/liberty";
+const WORLD_VIEW = {center:[10, 25], zoom:1.3};
 
-function drawBase(){
-  const box = svg.node().getBoundingClientRect();
-  W = box.width; H = box.height; if(!W || !H) return;
-  projection = d3.geoEqualEarth().fitExtent([[8,8],[W-8,H-8]], {type:"Sphere"});
-  path = d3.geoPath(projection);
-  gLand.selectAll("*").remove();
-  gLand.append("path").attr("class","sphere").attr("d", path({type:"Sphere"}));
-  gLand.append("path").attr("class","grat").attr("d", path(d3.geoGraticule10()));
-  gLand.selectAll("path.country").data(countries).join("path").attr("class","country").attr("d", path);
-  buildLabels();
-  renderPins();
-}
-
-/* country names: placed on each country's largest landmass, shown once there's room at the current zoom */
-const SHORT_NAMES = {"United States of America":"United States","Dem. Rep. Congo":"DR Congo","Central African Rep.":"Central African Rep.","Bosnia and Herz.":"Bosnia","Dominican Rep.":"Dominican Rep.","Eq. Guinea":"Eq. Guinea","S. Sudan":"South Sudan","Solomon Is.":"Solomon Is.","Fr. S. Antarctic Lands":"","Falkland Is.":"Falklands","W. Sahara":"W. Sahara","N. Cyprus":"","Somaliland":"","Antarctica":"Antarctica"};
-let labels = [], pinGroups = [];
-function largestPart(g){
-  if(!g || g.type !== "MultiPolygon") return g;
-  let best = null, bestA = -1;
-  g.coordinates.forEach(c=>{ const p = {type:"Polygon", coordinates:c}; const a = d3.geoArea(p); if(a > bestA){ bestA = a; best = p; } });
-  return best;
-}
-// A hidden map where each country is painted in its own colour, so "is this point inside country X?" is one lookup.
-let mask = null;
-const MASK_S = 2;
-function buildMask(){
-  const c = document.createElement("canvas"); c.width = Math.ceil(W * MASK_S); c.height = Math.ceil(H * MASK_S);
-  const ctx = c.getContext("2d", {willReadFrequently:true}); ctx.setTransform(MASK_S,0,0,MASK_S,0,0);
-  const p = d3.geoPath(projection, ctx);
-  countries.forEach((f,i)=>{ const v = ((i + 1) * 40503) & 0xFFFFFF; ctx.fillStyle = "#" + v.toString(16).padStart(6,"0"); ctx.beginPath(); p(f); ctx.fill(); });
-  const px = ctx.getImageData(0, 0, c.width, c.height).data, ids = new Int16Array(c.width * c.height), back = new Map();
-  countries.forEach((f,i)=>back.set(((i + 1) * 40503) & 0xFFFFFF, i));
-  for(let j=0, n=ids.length; j<n; j++){ const v = (px[j*4] << 16) | (px[j*4+1] << 8) | px[j*4+2]; const id = px[j*4+3] === 255 ? back.get(v) : undefined; ids[j] = id === undefined ? -1 : id; }
-  mask = {w:c.width, h:c.height, ids};
-}
-const maskAt = (x, y) => { const i = Math.round(x * MASK_S), j = Math.round(y * MASK_S); return i < 0 || j < 0 || i >= mask.w || j >= mask.h ? -1 : mask.ids[j * mask.w + i]; };
-const measure = (()=>{ const ctx = document.createElement("canvas").getContext("2d");
-  ctx.font = `600 100px "Helvetica Neue", Helvetica, Arial, sans-serif`;
-  return s => (ctx.measureText(s).width + s.length * 2) / 100; })();   // width per 1px of font size, with the letter-spacing
-
-function buildLabels(){
-  buildMask();
-  labels = countries.map((f, idx)=>{
-    const name = f.properties.name;
-    const label = SHORT_NAMES[name] ?? name;
-    if(!label) return null;
-    const part = largestPart(f.geometry); if(!part) return null;
-    const p = path.centroid(part); if(!p || !isFinite(p[0])) return null;
-    const b = path.bounds(part);
-    // Candidate spots across the country, nearest its middle first.
-    const spots = [];
-    if(maskAt(p[0], p[1]) === idx) spots.push([p[0], p[1]]);
-    const N = Math.max(12, Math.min(40, Math.round(Math.max(b[1][0]-b[0][0], b[1][1]-b[0][1]) / 3)));
-    for(let i=1; i<N; i++) for(let j=1; j<N; j++){
-      const x = b[0][0] + (b[1][0]-b[0][0]) * i/N, y = b[0][1] + (b[1][1]-b[0][1]) * j/N;
-      if(maskAt(x, y) === idx) spots.push([x, y]);
-    }
-    if(!spots.length) return null;
-    spots.sort((a,c)=>Math.hypot(a[0]-p[0], a[1]-p[1]) - Math.hypot(c[0]-p[0], c[1]-p[1]));
-    const text = label.toUpperCase();
-    // One line, or two for longer names with a space (SAUDI / ARABIA), like an atlas.
-    const forms = [[text]];
-    const sp = [...text.matchAll(/ /g)].map(m=>m.index);
-    if(sp.length){ const at = sp.reduce((a,b)=>Math.abs(b - text.length/2) < Math.abs(a - text.length/2) ? b : a); forms.push([text.slice(0, at), text.slice(at + 1)]); }
-    return {idx, name, label:text, forms:forms.map(lines=>({lines, em:Math.max(...lines.map(measure))})), area:path.area(part), spots};
-  }).filter(Boolean).sort((a,b)=>b.area - a.area);
-  gLabels.selectAll("text").data(labels, d=>d.name).join("text").attr("class","clabel");
-  updateLabels(true);
-}
-// Like a printed map: a name sits wholly inside its own country, clear of pins and other names.
-// If it can't, it waits until you zoom in far enough for it to fit.
-let labelFrame = 0;
-function updateLabels(now){
-  if(!now){ if(!labelFrame) labelFrame = requestAnimationFrame(()=>{ labelFrame = 0; updateLabels(true); }); return; }
-  if(!labels.length || !mask) return;
-  const visited = new Set(viewing.films.map(f=>MM.geoName(f.c)));
-  const pins = pinGroups.map(g=>[g.x * k, g.y * k, (g.films.length > 1 ? Math.min(16, 9 + Math.log2(g.films.length)*2) : 7.5) + 1.5]);
-  const order = [...labels].sort((a,b)=>(visited.has(b.name) - visited.has(a.name)) || b.area - a.area);
-  const placed = [], shown = new Map();
-  const fits = (d, cx, cy, w, h) => {
-    // every sample point of the name's box must land on this country (sampled in screen pixels, checked on the map);
-    // the very ends of the letters may touch the border
-    const x0 = cx - w/2 + 1.5, x1 = cx + w/2 - 1.5, rows = h > 14 ? 4 : 2;
-    for(let a=0; a<=6; a++) for(let c=0; c<=rows; c++){
-      if(maskAt((x0 + (x1 - x0)*a/6) / k, (cy - h/2 + h*c/rows) / k) !== d.idx) return false;
-    }
-    return true;
-  };
-  for(const d of order){
-    const side = Math.sqrt(d.area) * k;
-    const top = Math.max(7, Math.min(14, 6 + side / 14));
-    let done = null;
-    for(let fs = top; fs >= 7 && !done; fs = fs > 8 ? Math.max(7, fs - 1.5) : 0){
-      for(const form of d.forms){
-        const w = form.em * fs + 2, h = form.lines.length * fs * 1.05 + 1;
-        for(const [sx, sy] of d.spots){
-          const cx = sx * k, cy = sy * k;
-          const box = [cx - w/2, cy - h/2, cx + w/2, cy + h/2];
-          if(pins.some(([px,py,r])=>px > box[0]-r && px < box[2]+r && py > box[1]-r && py < box[3]+r)) continue;
-          if(placed.some(o=>!(box[2] + 3 < o[0] || box[0] - 3 > o[2] || box[3] + 1 < o[1] || box[1] - 1 > o[3]))) continue;
-          if(!fits(d, cx, cy, w, h)) continue;
-          done = {box, x:sx, y:sy, fs, lines:form.lines}; break;
-        }
-        if(done) break;
+function initMap(){
+  if(map || !window.maplibregl) return;
+  map = new maplibregl.Map({container:"map", style:MAP_STYLE, center:WORLD_VIEW.center, zoom:WORLD_VIEW.zoom,
+    minZoom:0.8, maxZoom:17, attributionControl:false, dragRotate:false, pitchWithRotate:false, renderWorldCopies:true});
+  map.touchZoomRotate.disableRotation();
+  map.addControl(new maplibregl.AttributionControl({compact:true}), "bottom-right");
+  map.on("load", ()=>{
+    // English place names where the map has them (like Google Maps in English).
+    for(const l of map.getStyle().layers){
+      if(l.type === "symbol" && map.getLayoutProperty(l.id, "text-field")){
+        map.setLayoutProperty(l.id, "text-field", ["coalesce", ["get","name:en"], ["get","name_en"], ["get","name:latin"], ["get","name"]]);
       }
     }
-    if(done){ placed.push(done.box); shown.set(d.name, done); }
-  }
-  gLabels.selectAll("text").each(function(d){
-    const s = shown.get(d.name), want = s ? s.lines.join("\n") : "";
-    if(!s || this.__lines === want) return;
-    this.__lines = want;
-    d3.select(this).selectAll("tspan").data(s.lines).join("tspan").attr("x", 0)
-      .attr("dy", (t,i)=>i === 0 ? (s.lines.length > 1 ? "-0.52em" : 0) : "1.05em").text(t=>t);
+    // Countries with a film: a light tint under the map's own labels.
+    const firstLabel = map.getStyle().layers.find(l=>l.type === "symbol");
+    map.addSource("mm-countries", {type:"geojson", data:{type:"FeatureCollection", features:countries}});
+    map.addLayer({id:"mm-visited", type:"fill", source:"mm-countries", paint:{"fill-color":"#E4002B", "fill-opacity":0.08},
+      filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
+    map.addLayer({id:"mm-visited-line", type:"line", source:"mm-countries", paint:{"line-color":"#E4002B", "line-opacity":0.35, "line-width":0.8},
+      filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
+    mapReady = true;
+    renderPins(); fitPins(false);
   });
-  gLabels.selectAll("text")
-    .attr("display", d=>shown.has(d.name) ? null : "none")
-    .attr("font-size", d=>shown.has(d.name) ? shown.get(d.name).fs : null)
-    .classed("visited", d=>visited.has(d.name))
-    .attr("transform", d=>{ const s = shown.get(d.name); return s ? `translate(${s.x},${s.y}) scale(${1/k})` : null; });
+  map.on("zoomend", ()=>renderPins());
+  map.on("click", ev=>{
+    if(!picking){ if(!$("#detail").hidden) closeDetail(); return; }
+    const ll = [ev.lngLat.wrap().lng, ev.lngLat.lat];
+    const hit = countries.find(c=>d3.geoContains(c, ll));
+    const cb = picking; picking = null;
+    $("#map").classList.remove("picking"); $("#pickhint").hidden = true;
+    cb({lon:+ll[0].toFixed(3), lat:+ll[1].toFixed(3), country: hit ? MM.displayCountry(hit.properties.name) : ""});
+  });
 }
-const zoom = d3.zoom().scaleExtent([1,40]).on("zoom", ev=>{
-  gRoot.attr("transform", ev.transform); k = ev.transform.k;
-  gPins.selectAll(".pin.film").attr("transform", d=>`translate(${d.x},${d.y}) scale(${1/k})`);
-  updateLabels();
-  if(preview && projection){ const p = projection([preview.lon, preview.lat]); gPins.selectAll(".preview").attr("transform", `translate(${p[0]},${p[1]}) scale(${1/k})`); }
-});
-svg.call(zoom).on("dblclick.zoom", null);
-$("#zin").onclick = ()=>svg.transition().duration(300).call(zoom.scaleBy, 1.6);
-$("#zout").onclick = ()=>svg.transition().duration(300).call(zoom.scaleBy, 1/1.6);
+function drawBase(){ if(!map) initMap(); else map.resize(); }
+$("#zin").onclick = ()=>map && map.zoomIn();
+$("#zout").onclick = ()=>map && map.zoomOut();
 $("#zfit").onclick = ()=>fitPins(true);
 
+// Films whose pins would overlap on screen at this zoom share one pin with a count.
 function groupFilms(list){
   const groups = [];
+  const near = 26;   // pixels
   list.forEach(f=>{
     if(!isFinite(f.lat) || !isFinite(f.lon)) return;
-    let g = groups.find(g=>Math.abs(g.lat-f.lat)<0.6 && Math.abs(g.lon-f.lon)<0.6);
-    if(!g){ g = {lat:f.lat, lon:f.lon, films:[]}; groups.push(g); }
+    const p = map.project([f.lon, f.lat]);
+    let g = groups.find(g=>Math.abs(g.px - p.x) < near && Math.abs(g.py - p.y) < near);
+    if(!g){ g = {lat:f.lat, lon:f.lon, px:p.x, py:p.y, films:[]}; groups.push(g); }
     g.films.push(f);
   });
-  groups.forEach(g=>{ const p = projection([g.lon,g.lat]); g.x = p[0]; g.y = p[1]; g.ap = g.films.every(f=>f.ap); g.key = g.films.map(MM.filmKey).join("~"); });
+  groups.forEach(g=>{ g.ap = g.films.every(f=>f.ap); g.key = g.films.map(MM.filmKey).join("~"); });
   return groups;
 }
 const isSeries = f => MM.isTv(f.tmdb);
@@ -274,59 +188,53 @@ document.querySelectorAll(".kinds button").forEach(b=>b.onclick = ()=>{
   document.querySelectorAll(".kinds button").forEach(x=>x.setAttribute("aria-selected", String(x === b)));
   closeDetail(); renderList();
 });
+// Pin icons (white, drawn on the coloured badge).
+const ICON = {
+  film:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 5h2v2h2V5h8v2h2V5h2v14h-2v-2h-2v2H8v-2H6v2H4V5Zm2 4v2h2V9H6Zm10 0v2h2V9h-2ZM6 13v2h2v-2H6Zm10 0v2h2v-2h-2Z"/></svg>',
+  series:'<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M8.6 3.2 12 6.1l3.4-2.9 1.3 1.5L14.3 7H20a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V8a1 1 0 0 1 1-1h5.7L7.3 4.7l1.3-1.5ZM5 9v9h14V9H5Z"/></svg>'
+};
+function pinElement(d){
+  const lone = d.films.length === 1;
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = "gpin" + (d.ap ? " approx" : "") + (lone && isSeries(d.films[0]) ? " series" : "") + (!!selected && d.films.includes(selected) ? " sel" : "") + (lone ? "" : " many");
+  el.setAttribute("aria-label", d.films.map(f=>f.t).join(", "));
+  el.title = d.films.length > 1 ? `${d.films.length} titles` : d.films[0].t;
+  el.innerHTML = `<span class="b">${lone ? ICON[isSeries(d.films[0]) ? "series" : "film"] : `<b>${d.films.length}</b>`}</span>`;
+  el.addEventListener("click", ev=>{ ev.stopPropagation(); openGroup(d); });
+  return el;
+}
 function renderPins(){
-  if(!projection) return;
-  const list = filtered();
-  const groups = pinGroups = groupFilms(list);
-  const pins = gPins.selectAll("g.pin.film").data(groups, d=>d.key).join(enter=>{
-    const g = enter.append("g").attr("class","pin film").attr("tabindex",0).attr("role","button");
-    g.append("circle").attr("class","dot"); g.append("rect").attr("class","dot"); g.append("text"); return g;
+  if(!mapReady) return;
+  markers.forEach(m=>m.remove()); markers = [];
+  const groups = groupFilms(filtered());
+  // Selected pin last, so it sits on top.
+  groups.sort((a,b)=>(!!selected && a.films.includes(selected)) - (!!selected && b.films.includes(selected)));
+  groups.forEach(g=>{
+    const sel = !!selected && g.films.includes(selected);
+    markers.push(new maplibregl.Marker({element:pinElement(g), anchor: sel ? "bottom" : "center"}).setLngLat([g.lon, g.lat]).addTo(map));
   });
-  pins.classed("approx", d=>d.ap).classed("sel", d=>!!selected && d.films.includes(selected))
-    .attr("aria-label", d=>d.films.map(f=>f.t).join(", "))
-    .attr("transform", d=>`translate(${d.x},${d.y}) scale(${1/k})`)
-    .on("click", (ev,d)=>{ ev.stopPropagation(); openGroup(d); })
-    .on("keydown", (ev,d)=>{ if(ev.key==="Enter"||ev.key===" "){ ev.preventDefault(); openGroup(d); } });
-  // A lone series gets a square pin; films and mixed groups get a round one.
-  const lone = d => d.films.length === 1 && isSeries(d.films[0]);
-  pins.select("circle").attr("display", d=>lone(d) ? "none" : null).attr("r", d=>d.films.length>1 ? Math.min(16, 9 + Math.log2(d.films.length)*2) : 7);
-  pins.select("rect").attr("display", d=>lone(d) ? null : "none").attr("x",-6.5).attr("y",-6.5).attr("width",13).attr("height",13).attr("rx",2.5);
-  pins.select("text").text(d=>d.films.length>1 ? d.films.length : "");
-  const visited = new Set(viewing.films.map(f=>MM.geoName(f.c)));
-  gLand.selectAll("path.country").classed("visited", d=>visited.has(d.properties.name));
-  updateLabels();
-  gPins.selectAll(".preview").remove();
+  const visited = [...new Set(viewing.films.map(f=>MM.geoName(f.c)))];
+  ["mm-visited", "mm-visited-line"].forEach(id=>{ if(map.getLayer(id)) map.setFilter(id, ["in", ["get","name"], ["literal", visited]]); });
+  if(previewMarker){ previewMarker.remove(); previewMarker = null; }
   if(preview){
-    const p = projection([preview.lon, preview.lat]);
-    gPins.append("g").attr("class","pin preview sel").attr("transform", `translate(${p[0]},${p[1]}) scale(${1/k})`).append("circle").attr("class","dot").attr("r",8);
+    const el = document.createElement("div"); el.className = "gpin sel preview"; el.innerHTML = `<span class="b">${ICON.film}</span>`;
+    previewMarker = new maplibregl.Marker({element:el, anchor:"bottom"}).setLngLat([preview.lon, preview.lat]).addTo(map);
   }
 }
 function fitPins(animate){
-  if(!projection) return;
-  const pts = viewing.films.filter(f=>isFinite(f.lat)).map(f=>projection([f.lon,f.lat]));
-  let t = d3.zoomIdentity;
-  if(pts.length){
-    const [x0,x1] = d3.extent(pts, p=>p[0]), [y0,y1] = d3.extent(pts, p=>p[1]);
-    const s = Math.max(1, Math.min(8, 0.88/Math.max((x1-x0+70)/W, (y1-y0+70)/H)));
-    t = d3.zoomIdentity.translate(W/2, H/2).scale(s).translate(-(x0+x1)/2, -(y0+y1)/2);
-  }
-  (animate ? svg.transition().duration(600) : svg).call(zoom.transform, t);
+  if(!mapReady) return;
+  const pts = viewing.films.filter(f=>isFinite(f.lat) && isFinite(f.lon));
+  if(!pts.length){ map.jumpTo(WORLD_VIEW); return; }
+  const b = new maplibregl.LngLatBounds();
+  pts.forEach(f=>b.extend([f.lon, f.lat]));
+  const pad = Math.min(60, Math.max(24, map.getContainer().clientWidth / 14));
+  map.fitBounds(b, {padding:{top:pad + 50, bottom:pad + 30, left:pad, right:pad}, maxZoom:6, duration: animate ? 700 : 0});
 }
 function flyTo(f){
-  if(!projection) return;
-  const [x,y] = projection([f.lon, f.lat]);
-  svg.transition().duration(650).call(zoom.transform, d3.zoomIdentity.translate(W/2, H/2).scale(Math.max(k, 5)).translate(-x, -y));
+  if(!mapReady || !isFinite(f.lat)) return;
+  map.flyTo({center:[f.lon, f.lat], zoom:Math.max(map.getZoom(), 5), duration:900, essential:true});
 }
-svg.on("click", ev=>{
-  if(!picking){ if(!$("#detail").hidden) closeDetail(); return; }
-  const t = d3.zoomTransform(svg.node());
-  const ll = projection.invert(t.invert(d3.pointer(ev, svg.node())));
-  if(!ll || isNaN(ll[0])) return;
-  const hit = countries.find(c=>d3.geoContains(c, ll));
-  const cb = picking; picking = null;
-  $("#map").classList.remove("picking"); $("#pickhint").hidden = true;
-  cb({lon:+ll[0].toFixed(3), lat:+ll[1].toFixed(3), country: hit ? MM.displayCountry(hit.properties.name) : ""});
-});
 function startPicking(cb){ picking = cb; $("#map").classList.add("picking"); $("#pickhint").hidden = false; if(window.innerWidth <= 860) $(".mapwrap").scrollIntoView({behavior:"smooth", block:"start"}); }
 
 /* ================= film card ================= */
