@@ -73,7 +73,7 @@ a:hover{color:var(--red)}
 .gpin.sel .b,.gpin.preview .b{width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);margin-bottom:5px;background:#111;color:#fff;border:2px solid #fff;outline:none}
 .gpin.sel .b>*,.gpin.preview .b>*{transform:rotate(45deg)}
 .gpin.sel .b svg,.gpin.preview .b svg{width:15px;height:15px}
-.mapbar{position:absolute;left:24px;top:24px;right:24px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
+.mapbar{position:absolute;z-index:3;left:24px;top:24px;right:24px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
 .mapbar>*{pointer-events:auto}
 .whose{background:var(--paper);padding:10px 14px 12px;max-width:380px;min-width:0;border-top:4px solid var(--red)}
 .whose small{display:block;font-size:12px;font-weight:500;color:var(--muted)}
@@ -82,6 +82,35 @@ a:hover{color:var(--red)}
 .zoom button{width:36px;height:36px;border:0;background:none;cursor:pointer;font-size:17px;font-weight:500;color:var(--ink)}
 .zoom button:hover{background:var(--ink);color:var(--paper)}
 .zoom button+button{border-top:1px solid var(--rule)}
+/* Map / List switch, beside the zoom buttons */
+.mapside{display:flex;gap:8px;align-items:flex-start}
+.viewtog{display:flex;border:1px solid var(--rule);background:var(--paper);flex:none}
+.viewtog button{height:36px;padding:0 12px;border:0;background:none;cursor:pointer;font:500 13px var(--f);color:var(--ink)}
+.viewtog button+button{border-left:1px solid var(--rule)}
+.viewtog button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.mapwrap.listing .zoom,.mapwrap.listing .legend,.mapwrap.listing .maplibregl-ctrl-bottom-right{display:none}
+/* The list view: countries in order of how many titles are set there */
+.clist{position:absolute;inset:0;background:var(--paper);overflow:auto;z-index:2;padding:110px 24px 32px}
+.clist-in{max-width:1100px}
+.clist .k{font-size:12px;color:var(--muted);margin:0 0 8px}
+.clist section{border-top:1px solid var(--rule);padding:14px 0 18px}
+.chead{display:flex;align-items:baseline;gap:12px;width:100%;padding:0;border:0;background:none;cursor:pointer;text-align:left;color:var(--ink);font:inherit}
+.chead b{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
+.chead span{font-size:14px;color:var(--muted)}
+.chead:hover b{color:var(--red)}
+.cposters{list-style:none;margin:12px 0 0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(84px,1fr));gap:12px}
+.cposters button{display:block;width:100%;padding:0;border:0;background:none;cursor:pointer;text-align:left;font:inherit;color:var(--ink)}
+.cposters .th{display:grid;place-items:center;aspect-ratio:2/3;background:var(--land) center/cover;font-size:10px;color:var(--muted);padding:4px;text-align:center;overflow:hidden}
+.cposters .t{display:block;font-size:11px;line-height:1.25;margin-top:5px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.cposters button:hover .th{outline:2px solid var(--red);outline-offset:-2px}
+/* Numbered steps on the Letterboxd tab */
+.step{display:flex;align-items:center;gap:10px;margin:22px 0 4px;font-size:17px;font-weight:700}
+.step span{display:inline-grid;place-items:center;width:24px;height:24px;background:var(--red);color:#fff;font-size:13px}
+/* A country's page */
+.back{border:0;background:none;padding:0;margin:0 0 14px;cursor:pointer;font:500 13px var(--f);color:var(--muted)}
+.back:hover{color:var(--ink)}
+.csec{display:flex;justify-content:space-between;align-items:baseline;border-top:1px solid var(--rule);margin:22px 0 4px;padding-top:10px;font-size:15px;font-weight:700}
+.csec span{font-weight:400;color:var(--muted)}
 .legend{position:absolute;left:24px;bottom:24px;display:flex;gap:18px;flex-wrap:wrap;background:var(--paper);padding:8px 12px;font-size:12px;color:var(--ink)}
 .legend span{display:inline-flex;align-items:center;gap:7px}
 .legend i{width:11px;height:11px;border-radius:50%;background:var(--red);display:inline-block}
@@ -262,6 +291,9 @@ a:hover{color:var(--red)}
   .whose h2{font-size:22px}
   .zoom button{width:32px;height:32px}
   .legend{display:none}
+  .clist{padding:84px 12px 24px}
+  .chead b{font-size:21px}
+  .viewtog button{height:32px;padding:0 10px}
   .rail{border-left:0;border-top:1px solid var(--rule);overflow:visible}
   .panel{overflow:visible}
   .profile{padding:18px 16px 16px;gap:14px}
