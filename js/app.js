@@ -140,11 +140,19 @@ function initMap(){
       paint:{"fill-color":"#111111", "fill-opacity":["interpolate", ["linear"], ["zoom"], 3.5, 1, 6, 0.14]},
       filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
     map.addSource("mm-country-points", {type:"geojson", data:{type:"FeatureCollection", features:countryPoints()}});
-    map.addLayer({id:"mm-visited-labels", type:"symbol", source:"mm-country-points", maxzoom:6,
+    // Their names: white on black, moving to a free side of their spot when a pin is in the way,
+    // and turning black as the fill fades when you zoom in.
+    map.addLayer({id:"mm-visited-labels", type:"symbol", source:"mm-country-points", maxzoom:7,
       layout:{"text-field":["get","label"], "text-font":["Noto Sans Bold"], "text-transform":"uppercase", "text-letter-spacing":0.08,
-        "text-size":["interpolate", ["linear"], ["zoom"], 1, 9, 4, 13], "text-max-width":7, "symbol-sort-key":["get","rank"]},
-      paint:{"text-color":"#FFFFFF", "text-opacity":["interpolate", ["linear"], ["zoom"], 4.5, 1, 5, 0]},
+        "text-size":["interpolate", ["linear"], ["zoom"], 1, 9, 4, 13], "text-max-width":7, "symbol-sort-key":["get","rank"],
+        "text-variable-anchor":["center", "top", "bottom", "left", "right"], "text-radial-offset":0.9, "text-padding":3},
+      paint:{"text-color":["interpolate", ["linear"], ["zoom"], 4.5, "#FFFFFF", 5.5, "#111111"]},
       filter:["in", ["get","name"], ["literal", []]]});
+    // Invisible stand-ins for the pins, so the map's names keep clear of them instead of running under them.
+    map.addImage("mm-block", {width:32, height:32, data:new Uint8Array(32 * 32 * 4)});
+    map.addSource("mm-pins", {type:"geojson", data:{type:"FeatureCollection", features:[]}});
+    map.addLayer({id:"mm-pin-blocks", type:"symbol", source:"mm-pins",
+      layout:{"icon-image":"mm-block", "icon-size":["get","s"], "icon-offset":["get","o"], "icon-allow-overlap":true, "icon-ignore-placement":false}});
     mapReady = true;
     renderPins(); fitPins(false);
   });
@@ -175,6 +183,7 @@ function countryPoints(){
 }
 // Repaint the OpenFreeMap "liberty" style in black, white and grey, in English, without the clutter.
 let countryLabelLayers = [];
+const NAME_EN = ["coalesce", ["get","name:en"], ["get","name_en"], ["get","name:latin"], ["get","name"]];
 const SW = {land:"#E6E6E6", water:"#FFFFFF", road:"#FFFFFF", casing:"#D2D2D2", building:"#D9D9D9", border:"#FFFFFF", ink:"#111111", muted:"#6E6E6E"};
 function swissStyle(){
   const set = (id, k, v) => { try{ map.setPaintProperty(id, k, v); }catch(e){} };
@@ -293,12 +302,20 @@ function renderPins(){
     const sel = !!selected && g.films.includes(selected);
     markers.push(new maplibregl.Marker({element:pinElement(g), anchor: sel ? "bottom" : "center"}).setLngLat([g.lon, g.lat]).addTo(map));
   });
+  // Where each pin is, so names avoid them (sizes match the pins drawn on screen).
+  const far = map.getZoom() < 2.6;
+  if(map.getSource("mm-pins")) map.getSource("mm-pins").setData({type:"FeatureCollection", features:groups.map(g=>{
+    const sel = !!selected && g.films.includes(selected), many = g.films.length > 1;
+    const px = (sel ? 34 : far ? (many ? 22 : 18) : (many ? 28 : 24)) + 4, s = px / 32;
+    return {type:"Feature", properties:{s, o:[0, sel ? -21 / s : 0]}, geometry:{type:"Point", coordinates:[g.lon, g.lat]}};
+  })});
   const visited = [...new Set(viewing.films.map(f=>MM.geoName(f.c)))];
   ["mm-visited", "mm-visited-labels"].forEach(id=>{ if(map.getLayer(id)) map.setFilter(id, ["in", ["get","name"], ["literal", visited]]); });
-  // The map's own name for a country with a film steps aside (until zoomed in) for the white one.
+  // The map's own name for a country with a film is left out entirely (not just hidden, which would
+  // still take up room), so the white name has the space to itself.
   const named = [...new Set(visited.flatMap(n=>[n, MM.displayCountry(n), (countryPointsCache || []).find(p=>p.properties.name === n)?.properties.label].filter(Boolean)))];
   const onBlack = ["any", ["in", ["get","name:en"], ["literal", named]], ["in", ["get","name"], ["literal", named]]];
-  countryLabelLayers.forEach(id=>map.setPaintProperty(id, "text-opacity", ["interpolate", ["linear"], ["zoom"], 4.5, ["case", onBlack, 0, 1], 5, 1]));
+  countryLabelLayers.forEach(id=>map.setLayoutProperty(id, "text-field", ["case", onBlack, "", NAME_EN]));
   if(previewMarker){ previewMarker.remove(); previewMarker = null; }
   if(preview){
     const el = document.createElement("div"); el.className = "gpin sel preview"; el.innerHTML = `<span class="b">${ICON.film}</span>`;
