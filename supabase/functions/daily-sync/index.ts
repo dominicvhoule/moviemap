@@ -205,6 +205,38 @@ async function settingFor(d: NonNullable<Awaited<ReturnType<typeof details>>>): 
   return s ?? await fromCountry(d.iso).catch(() => null);
 }
 
+// ---------- friends: follow anyone this member follows on Letterboxd who is on MovieMap ----------
+async function letterboxdFollowing(username: string): Promise<string[]> {
+  const names: string[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const r = await fetch(`https://letterboxd.com/${username}/following/${page > 1 ? `page/${page}/` : ""}`, { headers: UA });
+    if (!r.ok) break;
+    const html = await r.text();
+    const found = [...html.matchAll(/<a href="\/([A-Za-z0-9_]{1,30})\/" class="name"/g)].map((m) => m[1]);
+    found.forEach((n) => { if (n.toLowerCase() !== username.toLowerCase() && !names.includes(n)) names.push(n); });
+    if (!found.length || !new RegExp(`/${username}/following/page/${page + 1}/`, "i").test(html)) break;
+    await sleep(300);
+  }
+  return names;
+}
+async function syncFriends(p: { id: string; letterboxd: string; lb_seen?: string[] | null }) {
+  const names = await letterboxdFollowing(p.letterboxd);
+  const seen = new Set((p.lb_seen ?? []).map((n) => n.toLowerCase()));
+  const fresh = names.filter((n) => !seen.has(n.toLowerCase()));
+  const found: { id: string; letterboxd: string }[] = [];
+  for (let i = 0; i < fresh.length; i += 40) {
+    const part = fresh.slice(i, i + 40), want = new Set(part.map((n) => n.toLowerCase()));
+    const rows = await db(`profiles?select=id,letterboxd&or=(${part.map((n) => `letterboxd.ilike.${n}`).join(",")})`) ?? [];
+    rows.forEach((r: { id: string; letterboxd: string }) => { if (r.id !== p.id && r.letterboxd && want.has(r.letterboxd.toLowerCase())) found.push(r); });
+  }
+  if (!found.length) return 0;
+  await db("follows?on_conflict=follower,followee", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates" },
+    body: JSON.stringify(found.map((f) => ({ follower: p.id, followee: f.id }))) });
+  const all = [...seen, ...found.map((f) => f.letterboxd.toLowerCase())];
+  await db(`profiles?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ lb_seen: all }) }).catch(() => {});
+  return found.length;
+}
+
 // ---------- one member ----------
 async function syncMember(p: { id: string; letterboxd: string }, deadline: number) {
   const entries = await letterboxd(p.letterboxd);
@@ -236,12 +268,15 @@ Deno.serve(async (req) => {
   if (!CRON_SECRET || req.headers.get("x-cron-secret") !== CRON_SECRET) return new Response("forbidden", { status: 403 });
   const started = Date.now(), deadline = started + TIME_BUDGET;
   const due = new Date(Date.now() - STALE_HOURS * 3600_000).toISOString();
-  const members: { id: string; letterboxd: string }[] = await db(`profiles?letterboxd=not.is.null&or=(last_synced.is.null,last_synced.lt.${due})&select=id,letterboxd&order=last_synced.asc.nullsfirst&limit=50`) ?? [];
+  const q = (cols: string) => db(`profiles?letterboxd=not.is.null&or=(last_synced.is.null,last_synced.lt.${due})&select=${cols}&order=last_synced.asc.nullsfirst&limit=50`);
+  // lb_seen arrives with migration 005; work without it until then.
+  const members: { id: string; letterboxd: string; lb_seen?: string[] }[] = await q("id,letterboxd,lb_seen").catch(() => q("id,letterboxd")) ?? [];
   const report: Record<string, number | string> = {};
   for (const m of members) {
     if (Date.now() > deadline) break;
     try { report[m.letterboxd] = await syncMember(m, deadline); }
     catch (e) { report[m.letterboxd] = "error: " + String((e as Error).message).slice(0, 120); }
+    try { const n = await syncFriends(m); if (n) report[m.letterboxd + " friends"] = n; } catch { /* friends are a bonus */ }
     await db(`profiles?id=eq.${m.id}`, { method: "PATCH", body: JSON.stringify({ last_synced: new Date().toISOString() }) }).catch(() => {});
     await sleep(500);   // be gentle with Letterboxd
   }

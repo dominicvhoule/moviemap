@@ -731,6 +731,7 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
     [...prev.missed, ...missed].forEach(m=>{ if(!(m.tmdb && nowIds.has(m.tmdb)) && !nowKeys.has(MM.filmKey(m))) byId.set(m.tmdb || MM.filmKey(m), {t:m.t, y:m.y, tmdb:m.tmdb||null, poster:m.poster||null}); });
     MM.lsSet(lbReportKey(), {total: full ? all.length : Math.max(prev.total||0, all.length), full: full || !!prev.full, missed:[...byId.values()]});
     MM.lsSet(lbSyncKey(), Date.now());
+    linkLetterboxdFriends(quiet).catch(()=>{});
     if(added && viewing.mine){ viewing.films = myFilms; renderAll(); fitPins(true); }
     if(byId.size && (added || !quiet)) toast(`${added ? `Added ${added} from Letterboxd. ` : ""}${byId.size} need${byId.size===1?"s":""} a pin: see the Letterboxd tab`);
     else if(added) toast(`Added ${added} film${added===1?"":"s"} from Letterboxd`);
@@ -741,6 +742,39 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
     return {error:e.message};
   }finally{ syncing = false; }
 }
+// Friends: anyone you follow on Letterboxd who has a MovieMap account (with that Letterboxd profile
+// linked) is followed here too. Each friend is only added once, so unfollowing them here sticks.
+const lbFriendsKey = () => "mm-lb-friends:" + (me ? me.id : "");
+async function linkLetterboxdFriends(quiet){
+  if(!cloud() || !me.letterboxd) return;
+  let names;
+  try{ names = (await lbInvoke({username:me.letterboxd, mode:"following"})).following; }catch(e){ return; }
+  if(!Array.isArray(names)) return;                       // the deployed function predates friends
+  const done = new Set([...(Array.isArray(me.lb_seen) ? me.lb_seen : []), ...MM.lsGet(lbFriendsKey(), [])].map(n=>String(n).toLowerCase()));
+  const fresh = names.filter(n=>!done.has(n.toLowerCase()));
+  const found = [];
+  for(let i=0; i<fresh.length; i+=40){
+    const part = fresh.slice(i, i+40);
+    const {data} = await sb.from("profiles").select("id,username,display_name,letterboxd").or(part.map(n=>`letterboxd.ilike.${n}`).join(","));
+    const want = new Set(part.map(n=>n.toLowerCase()));
+    (data || []).forEach(p=>{ if(p.id !== me.id && p.letterboxd && want.has(p.letterboxd.toLowerCase())) found.push(p); });
+  }
+  const report = {checked:Date.now(), following:names.length, onMovieMap:MM.lsGet(lbFriendsKey() + ":n", 0)};
+  if(found.length){
+    const {error} = await sb.from("follows").upsert(found.map(p=>({follower:me.id, followee:p.id})), {onConflict:"follower,followee", ignoreDuplicates:true});
+    if(error) return;
+    const seen = [...done, ...found.map(p=>p.letterboxd.toLowerCase())];
+    MM.lsSet(lbFriendsKey(), seen);
+    const {error:e2} = await sb.from("profiles").update({lb_seen:seen}).eq("id", me.id);
+    if(!e2) me.lb_seen = seen;
+    report.onMovieMap += found.length; MM.lsSet(lbFriendsKey() + ":n", report.onMovieMap);
+    const who = found.slice(0, 3).map(p=>"@" + p.username).join(", ") + (found.length > 3 ? ` and ${found.length - 3} more` : "");
+    toast(`Now following ${who} from your Letterboxd friends`);
+  }
+  MM.lsSet(lbFriendsKey() + ":report", report);
+  if(location.hash === "#/import" && !lbEditing) renderImport();
+}
+
 // Re-check pins that were only country guesses (or have a hand-checked setting now). Pins you moved yourself are left alone.
 const FIX_VERSION = "mm-fix-v4:";
 async function refreshSettings(force){
@@ -787,14 +821,15 @@ function renderImport(){
   const onMap = new Set(myFilms.map(f=>f.tmdb).filter(Boolean)), mk = myKeys();
   const missing = rep ? rep.missed.filter(m=>!(m.tmdb && onMap.has(m.tmdb)) && !mk.has(MM.filmKey(m))) : [];
   el.innerHTML = `<h2 class="h">Letterboxd</h2>
-    <p class="hint">Connect your Letterboxd username and every film you've watched shows up on your map. New ones are added automatically when you open MovieMap. It reads your public Letterboxd profile, so there's no password involved.</p>
+    <p class="hint">Connect your Letterboxd username and every film you've watched shows up on your map. New ones are added automatically, and anyone you follow on Letterboxd who's on MovieMap is followed here too. It reads your public Letterboxd profile, so there's no password involved.</p>
     ${cloud() ? `
     ${lb && !lbEditing ? `
     <div class="linked">
       <div style="min-width:0"><small>Linked profile</small><b><a href="https://letterboxd.com/${esc(lb)}/" target="_blank" rel="noopener">letterboxd.com/${esc(lb)}</a></b></div>
       <div class="cta"><button class="btn ghost" type="button" id="lbchange">Change profile</button></div>
     </div>
-    <p class="hint" id="lbs">New films are added automatically.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}</p>`
+    <p class="hint" id="lbs">New films are added automatically.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}</p>
+    ${(fr=>fr ? `<p class="hint">Friends: you follow ${fr.following} ${fr.following===1?"person":"people"} on Letterboxd${fr.onMovieMap ? `; ${fr.onMovieMap} ${fr.onMovieMap===1?"is":"are"} on MovieMap and followed here too (see <a href="#/explore">People</a>)` : ". None of them are on MovieMap yet. When they join and link Letterboxd, you'll follow them here automatically"}.</p>` : "")(MM.lsGet(lbFriendsKey() + ":report", null))}`
     : `
     <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${lbEditing ? "" : esc(lb||"")}"><button class="btn" type="submit">Connect</button>${lbEditing ? `<button class="btn ghost" type="button" id="lbcancel">Cancel</button>` : ""}</form>
     <p class="hint" id="lbs">${lbEditing ? `Currently linked to letterboxd.com/${esc(lb)}. Films already on your map stay there.` : "Your Letterboxd profile needs to be public."}</p>`}
