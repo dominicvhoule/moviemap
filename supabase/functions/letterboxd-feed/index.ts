@@ -5,7 +5,8 @@
 //
 // Request bodies (POST, JSON):
 //   {username}                         recent diary feed (RSS, last 50 entries)
-//   {username, mode:"films", page:N}   one page of the member's watched films (about 72 per page)
+//   {username, mode:"films", page:N, sort?}  one page of the member's watched films (about 72 per page);
+//                                      sort "date" = most recently added first, "rated-date" = most recently rated
 //   {mode:"film", slugs:[...]}         TMDB id + year for up to 20 film slugs (used when a list entry has no year)
 //   {username, mode:"following"}       usernames of everyone this person follows (complete list, or an error)
 
@@ -93,14 +94,14 @@ function parseFilmsPage(html: string) {
   return out;
 }
 
-async function filmsPage(username: string, page: number) {
-  const url = `https://letterboxd.com/${username}/films/${page > 1 ? `page/${page}/` : ""}`;
+async function filmsPage(username: string, page: number, sort: string) {
+  const url = `https://letterboxd.com/${username}/films/${sort ? `by/${sort}/` : ""}${page > 1 ? `page/${page}/` : ""}`;
   const res = await get(url);
   if (res.status === 404) return page === 1 ? json({ error: "not_found" }, 404) : json({ username, page, films: [], more: false });
   if (!res.ok) return json({ error: "upstream", status: res.status }, 502);
   const html = await res.text();
   const films = parseFilmsPage(html);
-  const more = films.length > 0 && (new RegExp(`/${username}/films/page/${page + 1}/`, "i").test(html) || /class="next"/.test(html));
+  const more = films.length > 0 && (new RegExp(`/${username}/films/(by/[a-z-]+/)?page/${page + 1}/`, "i").test(html) || /class="next"/.test(html));
   return json({ username, page, films, more });
 }
 
@@ -162,7 +163,8 @@ Deno.serve(async (req) => {
     if (mode === "following") return await following(username);
     if (mode === "films") {
       const page = Math.max(1, Math.min(200, Math.floor(Number(body.page) || 1)));
-      return await filmsPage(username, page);
+      const sort = ["date", "rated-date"].includes(String(body.sort)) ? String(body.sort) : "";
+      return await filmsPage(username, page, sort);
     }
     return await feed(username);
   } catch {

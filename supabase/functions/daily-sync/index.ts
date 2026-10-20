@@ -319,9 +319,10 @@ async function syncMap(t: Target, username: string, deadline: number) {
     });
     added++;
   });
-  // With the complete list: link older pins, copy ratings over, and remove films taken off Letterboxd.
+  // Link older pins and copy ratings over for every film we could read; remove films taken off
+  // Letterboxd only after a complete read (Letterboxd usually only lets us read the first page).
   const out = { added, rated: 0, removed: 0, held: 0, left: allPlaced ? 0 : fresh.length - added, finished: false };
-  if (!complete || !grid.length || Date.now() > deadline) return out;
+  if (!grid.length || Date.now() > deadline) return out;
   have = await db(`${t.table}?${owner}&select=id,title,year,tmdb_id,rating,lb_slug&limit=10000`) ?? [];
   const claimed = new Set(have.map((h) => h.lb_slug).filter(Boolean));
   for (const h of have) {
@@ -338,6 +339,7 @@ async function syncMap(t: Target, username: string, deadline: number) {
     await db(`${t.table}?id=eq.${h.id}`, { method: "PATCH", body: JSON.stringify({ rating: want }) });
     out.rated++;
   }
+  if (!complete) { out.finished = allPlaced; return out; }
   const linked = have.filter((h) => h.lb_slug), gone = linked.filter((h) => !gridBySlug.has(h.lb_slug!));
   // A sudden large disappearance is more likely a reading problem than a real clear-out: hold off.
   if (gone.length > Math.max(5, linked.length * 0.3)) { out.held = gone.length; return out; }

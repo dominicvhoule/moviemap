@@ -284,6 +284,8 @@ function pinElement(d){
 function renderPins(){
   if(!mapReady) return;
   markers.forEach(m=>m.remove()); markers = [];
+  // Smaller pins when looking at the whole world, so country names show between them.
+  map.getContainer().classList.toggle("far", map.getZoom() < 2.6);
   const groups = groupFilms(filtered());
   // Selected pin last, so it sits on top.
   groups.sort((a,b)=>(!!selected && a.films.includes(selected)) - (!!selected && b.films.includes(selected)));
@@ -648,7 +650,9 @@ async function fetchLetterboxdFilms(username, maxPages, onPage){
   const all = [];
   all.complete = false;
   for(let page=1; page<=maxPages; page++){
-    const d = await lbInvoke({username, mode:"films", page});
+    let d;
+    // Letterboxd only lets us read the first page; a refused later page just means the list is partial.
+    try{ d = await lbInvoke({username, mode:"films", page}); }catch(e){ if(page === 1) throw e; break; }
     if(d.films && d.films.length && d.films[0].slug === undefined) throw new Error("old_function");   // the deployed function predates list support
     all.push(...(d.films || []).map(f=>({t:f.title, y:f.year || "", r:f.rating || null, slug:f.slug})));
     onPage && onPage(page, all.length);
@@ -725,7 +729,10 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
     MM.lsSet(lbSyncKey(), Date.now());
     // With the complete films list in hand: copy rating changes over and drop films removed from Letterboxd.
     let changes = {rated:0, removed:0, held:0};
-    if(full && list.complete && list.length) changes = await reconcileLetterboxd(list);
+    // Ratings follow Letterboxd for every film we could read; removals only after a complete read.
+    // (The films list shows current ratings and wins; the diary feed fills in films beyond the first page,
+    // newest entry last so it wins over older rewatches.)
+    if(list.length || feed.length) changes = await reconcileLetterboxd([...feed.filter(e=>e.slug && e.r != null).reverse(), ...list], full && list.complete);
     linkLetterboxdFriends(quiet).catch(()=>{});
     if((added || changes.rated || changes.removed) && viewing.mine){ viewing.films = myFilms; renderAll(); if(added || changes.removed) fitPins(true); }
     if(changes.removed || changes.rated) toast([changes.removed ? `Removed ${changes.removed} film${changes.removed===1?"":"s"} you took off Letterboxd` : "", changes.rated ? `updated ${changes.rated} rating${changes.rated===1?"":"s"}` : ""].filter(Boolean).join(", ").replace(/^u/, "U"));
@@ -745,7 +752,7 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
 // never touched. If an unusually large share would disappear at once, nothing is removed, since that's
 // more likely a reading problem than a real clear-out.
 const lbSlugify = t => String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, "").replace(/['’.]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-async function reconcileLetterboxd(list){
+async function reconcileLetterboxd(list, complete){
   const bySlug = new Map(list.map(e=>[e.slug, e]));
   const byKey = new Map(list.filter(e=>e.y).map(e=>[MM.filmKey(e), e]));
   const out = {rated:0, removed:0, held:0};
@@ -766,7 +773,8 @@ async function reconcileLetterboxd(list){
     const {error} = await sb.from("logs").update({rating:want}).eq("id", f.id);
     if(!error){ f.r = want; out.rated++; }
   }
-  // 3. films no longer on Letterboxd come off the map
+  // 3. films no longer on Letterboxd come off the map (only when we've seen the whole list)
+  if(!complete) return out;
   const linked = myFilms.filter(f=>f.lbs && f.id), gone = linked.filter(f=>!bySlug.has(f.lbs));
   if(gone.length > Math.max(5, linked.length * 0.3)){ out.held = gone.length; return out; }
   for(let i=0; i<gone.length; i+=100){
@@ -863,6 +871,84 @@ function maybeAutoSync(){
   if(full || Date.now() - last > LB_SYNC_EVERY) syncLetterboxd({quiet:true, full}).then(r=>{ if(full && r && !r.error) MM.lsSet(lbSyncKey() + ":full", Date.now()); });
 }
 
+/* ---------- Letterboxd export import (the full history) ---------- */
+// Letterboxd's export is a zip of CSV files. watched.csv lists every film, ratings.csv the current
+// ratings, diary.csv the watch dates. Any of them (or the zip) can be chosen.
+function parseCSV(text){
+  const rows = []; let row = [], cell = "", q = false;
+  for(let i=0; i<text.length; i++){
+    const ch = text[i];
+    if(q){ if(ch === '"'){ if(text[i+1] === '"'){ cell += '"'; i++; } else q = false; } else cell += ch; }
+    else if(ch === '"') q = true;
+    else if(ch === ","){ row.push(cell); cell = ""; }
+    else if(ch === "\n" || ch === "\r"){ if(ch === "\r" && text[i+1] === "\n") i++; row.push(cell); rows.push(row); row = []; cell = ""; }
+    else cell += ch;
+  }
+  if(cell || row.length){ row.push(cell); rows.push(row); }
+  const head = (rows.shift() || []).map(h=>h.trim());
+  return rows.filter(r=>r.some(Boolean)).map(r=>Object.fromEntries(head.map((h,i)=>[h, (r[i] || "").trim()])));
+}
+let jszipLoading = null;
+function loadJSZip(){
+  if(window.JSZip) return Promise.resolve(window.JSZip);
+  return jszipLoading ||= new Promise((ok, no)=>{ const sc = document.createElement("script"); sc.src = "https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"; sc.onload = ()=>ok(window.JSZip); sc.onerror = no; document.head.append(sc); });
+}
+async function readExport(files){
+  const csv = {};   // watched / ratings / diary → rows
+  for(const f of files){
+    if(/\.zip$/i.test(f.name)){
+      const Z = await loadJSZip(), z = await Z.loadAsync(f);
+      for(const name of Object.keys(z.files)){
+        const m = name.match(/(?:^|\/)(watched|ratings|diary)\.csv$/i);
+        if(m) csv[m[1].toLowerCase()] = parseCSV(await z.files[name].async("string"));
+      }
+    } else {
+      const m = f.name.match(/(watched|ratings|diary)[^/]*\.csv$/i);
+      if(m) csv[m[1].toLowerCase()] = parseCSV(await f.text());
+    }
+  }
+  const films = new Map();
+  const add = r => { const t = r.Name, y = +r.Year || ""; if(!t) return null; const k = MM.filmKey({t, y}); if(!films.has(k)) films.set(k, {t, y, r:null, watched:""}); return films.get(k); };
+  (csv.watched || []).forEach(add);
+  (csv.diary || []).forEach(r=>{ const e = add(r); if(!e) return; const w = r["Watched Date"] || r.Date; if(w > e.watched) e.watched = w; if(e.r == null && +r.Rating) e.r = +r.Rating; });
+  (csv.ratings || []).forEach(r=>{ const e = add(r); if(e && +r.Rating) e.r = +r.Rating; });   // current ratings win
+  return {films:[...films.values()], found:Object.keys(csv)};
+}
+let importing = false;
+async function importLetterboxdExport(files, status, button){
+  if(importing) return;
+  importing = true; if(button) button.setAttribute("aria-disabled", "true");
+  const say = t => { if(status) status.textContent = t; };
+  try{
+    say("Reading your export…");
+    const {films, found} = await readExport(files);
+    if(!found.length){ say("That file doesn't look like a Letterboxd export. Choose the zip you downloaded from Letterboxd, or watched.csv from inside it."); return; }
+    const have = myKeys();
+    const todo = films.filter(e=>!have.has(MM.filmKey(e)));
+    if(!todo.length){ say(`All ${films.length} films from your export are already on your map.`); return; }
+    let added = 0, missed = [];
+    // In batches, saving each one, so a big library keeps its progress if the page closes.
+    for(let i=0; i<todo.length; i+=40){
+      const part = todo.slice(i, i+40);
+      say(`Placing your films… ${i} of ${todo.length}. Keep this page open.`);
+      const {ready, unmatched, unplaced} = await placeEntries(part, null);
+      added += (await Store.add(ready)).added;
+      missed.push(...unmatched, ...unplaced);
+    }
+    await reloadMine();
+    if(cloud()){
+      const prev = MM.lsGet(lbReportKey(), null) || {missed:[], total:0};
+      const byId = new Map(); [...prev.missed, ...missed].forEach(m=>byId.set(m.tmdb || MM.filmKey(m), {t:m.t, y:m.y, tmdb:m.tmdb || null, poster:m.poster || null}));
+      MM.lsSet(lbReportKey(), {total:Math.max(prev.total || 0, films.length), full:true, missed:[...byId.values()]});
+    }
+    if(viewing.mine){ viewing.films = myFilms; renderAll(); fitPins(true); }
+    toast(`Added ${added} film${added===1?"":"s"} from your Letterboxd export`);
+    renderImport();
+    const s2 = $("#lbzs"); if(s2) s2.textContent = `Done: ${added} added${missed.length ? `, ${missed.length} need${missed.length===1?"s":""} a pin (listed above)` : ""}.`;
+  }catch(e){ say("Couldn't read that file. Try the zip exactly as Letterboxd sent it."); }
+  finally{ importing = false; if(button) button.removeAttribute("aria-disabled"); }
+}
+
 let lbEditing = false;   // the linked profile stays locked until "Change profile" is clicked
 function renderImport(){
   showMine_keepView();
@@ -873,7 +959,7 @@ function renderImport(){
   const onMap = new Set(myFilms.map(f=>f.tmdb).filter(Boolean)), mk = myKeys();
   const missing = rep ? rep.missed.filter(m=>!(m.tmdb && onMap.has(m.tmdb)) && !mk.has(MM.filmKey(m))) : [];
   el.innerHTML = `<h2 class="h">Letterboxd</h2>
-    <p class="hint">Connect your Letterboxd username and every film you've watched shows up on your map. New ones are added automatically, and the people you follow on Letterboxd who are on MovieMap are followed here too (and unfollowed when you unfollow them there). It reads your public Letterboxd profile, so there's no password involved.</p>
+    <p class="hint">Link your Letterboxd username and your most recent films come in: your last 50 diary entries and your 72 newest films. New ones are added automatically after that, and the people you follow on Letterboxd who are on MovieMap are followed here too. It reads your public profile, so there's no password involved. For everything you've ever watched, import your Letterboxd export below.</p>
     ${cloud() ? `
     ${lb && !lbEditing ? `
     <div class="linked">
@@ -890,9 +976,18 @@ function renderImport(){
       ${missing.length ? `<p class="hint">We couldn't work out where ${missing.length===1 ? "this one takes" : "these take"} place. Tap Place it to pin ${missing.length===1 ? "it" : "each one"} yourself.</p>
       <ul class="results">${missing.map((m,i)=>`<li><button data-i="${i}"><span class="th" ${m.poster ? `style="background-image:url('${MM.poster(m.poster,"w92")}')"` : ""}></span><span style="min-width:0"><b>${esc(m.t)} <span class="m">${esc(m.y)}</span></b><span class="m" style="color:var(--rust)">Place it →</span></span></button></li>`).join("")}</ul>` : ""}
     </div>` : ""}
-    <p class="hint">Connecting reads your whole Letterboxd films list, which takes a minute for big libraries. After that MovieMap checks for new films by itself. Your profile has to be public. Anything that doesn't come through can be added with <a href="#/log">Log a film</a>.</p>`
-    : `<p class="notice">${sb ? '<a href="#/account">Sign in</a> to connect your Letterboxd username.' : "Accounts aren't switched on for this site yet."}</p>`}`;
+    <p class="hint">Your profile has to be public. Anything that doesn't come through can be added with <a href="#/log">Log a film</a>.</p>`
+    : `<p class="notice">${sb ? '<a href="#/account">Sign in</a> to link your Letterboxd username.' : "Accounts aren't switched on for this site yet."}</p>`}
+    <div class="box" id="lbimport">
+      <b class="sub" style="font-size:15px">Import your full history</b>
+      <p class="hint">Letterboxd only lets MovieMap read your most recent films. To bring in everything, download your data from Letterboxd (<a href="https://letterboxd.com/settings/data/" target="_blank" rel="noopener">Settings → Import &amp; Export → Export your data</a>), then choose the zip file here. Ratings and watch dates come too, and films already on your map are skipped.</p>
+      <div class="cta"><label class="btn" for="lbzip" tabindex="0">Choose export file</label><input type="file" id="lbzip" accept=".zip,.csv" multiple hidden></div>
+      <p class="hint" id="lbzs" aria-live="polite"></p>
+    </div>`;
   el.querySelectorAll(".results button").forEach(b=>b.onclick = ()=>{ pendingLog = missing[+b.dataset.i]; location.hash = "#/log"; });
+  const zip = $("#lbzip"), zl = el.querySelector('label[for="lbzip"]');
+  if(zl) zl.onkeydown = e=>{ if(e.key === "Enter" || e.key === " "){ e.preventDefault(); zip.click(); } };
+  if(zip) zip.onchange = ()=>{ if(zip.files.length) importLetterboxdExport([...zip.files], $("#lbzs"), zl); };
   const ch = $("#lbchange"); if(ch) ch.onclick = ()=>{ lbEditing = true; renderImport(); $("#lbu").focus(); };
   const cc = $("#lbcancel"); if(cc) cc.onclick = ()=>{ lbEditing = false; renderImport(); };
   const f = $("#lbf");

@@ -67,6 +67,9 @@ a:hover{color:var(--red)}
 .gpin.approx:hover .b{background:#111;color:#fff;border-color:#111}
 .gpin.many .b{width:28px;height:28px;font:700 12px/1 var(--f)}
 .gpin.many.approx .b{border-style:solid}
+#map.far .gpin:not(.sel):not(.preview) .b{width:18px;height:18px;border-width:1.5px}
+#map.far .gpin:not(.sel):not(.preview) .b svg{width:10px;height:10px}
+#map.far .gpin.many .b{width:22px;height:22px;font-size:10px}
 .gpin.sel .b,.gpin.preview .b{width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);margin-bottom:5px;background:#111;color:#fff;border:2px solid #fff;outline:none}
 .gpin.sel .b>*,.gpin.preview .b>*{transform:rotate(45deg)}
 .gpin.sel .b svg,.gpin.preview .b svg{width:15px;height:15px}
