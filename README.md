@@ -55,7 +55,7 @@ The anon key is meant to be public. Row-level security in `schema.sql` lets anyo
 index.html          page shell
 styles.css          all styles (phone layout at the bottom)
 config.js           TMDB key + Supabase settings
-js/featured.js      Henry's hand-checked starter map, shown to signed-out visitors
+js/featured.js      @mattgoold's hand-checked starter map, shown to signed-out visitors
 js/data.js          TMDB and Wikidata lookups
 js/wikiplot.js      reads the places linked in a Wikipedia plot
 js/poster.js        printable poster
