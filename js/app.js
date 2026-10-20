@@ -675,7 +675,7 @@ async function renderStats(){
   if(rest) ctryRows.push({label:`${groups.length - 10} other countries`, v:rest, text:pct(rest) + "%"});
   const contRows = [...conts.entries()].sort((a,b)=>b[1] - a[1]).map(([c,v])=>({label:c, v, text:pct(v) + "%"}));
   const decRows = [...decades.entries()].sort((a,b)=>a[0] - b[0]).map(([d,v])=>({label:d + "s", v, text:String(v)}));
-  el.innerHTML = `<div class="clist-in stats">
+  el.innerHTML = `<div class="clist-in statsview">
     <div class="bignums">
       <div><b>${groups.length}</b><span>countries, ${Math.round(groups.length * 100 / 195)}% of the world</span></div>
       <div><b>${conts.size}</b><span>continent${conts.size===1?"":"s"}</span></div>
