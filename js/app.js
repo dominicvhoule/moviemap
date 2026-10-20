@@ -127,8 +127,10 @@ function initMap(){
   map = new maplibregl.Map({container:"map", style:MAP_STYLE, center:WORLD_VIEW.center, zoom:WORLD_VIEW.zoom,
     minZoom:0.8, maxZoom:17, attributionControl:false, dragRotate:false, pitchWithRotate:false, renderWorldCopies:true});
   map.touchZoomRotate.disableRotation();
+  map.getCanvasContainer().style.background = "#E6E6E6";
   map.addControl(new maplibregl.AttributionControl({compact:true}), "bottom-right");
-  map.on("load", ()=>{
+  // Restyle and pin as soon as the style arrives, without waiting for every tile to finish.
+  map.once("style.load", ()=>{
     swissStyle();
     // Countries with a film: a darker grey under the map's own labels.
     const firstLabel = map.getStyle().layers.find(l=>l.type === "symbol");
