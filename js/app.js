@@ -1018,7 +1018,7 @@ async function downloadPoster(kind){
 /* ---------- people ---------- */
 async function renderExplore(){
   const el = $("#explore");
-  const starter = `<a class="ucard" href="#/u/${FEATURED.username}"><span class="avatar" style="background:${MM.avatarColor(FEATURED.username)}">${FEATURED.name[0]}</span><span style="min-width:0"><b>${esc(FEATURED.name)}</b><span class="m">Starter map · hand-checked settings</span></span><em><b>${FEATURED.films.length}</b><br>films</em></a>`;
+  const starter = `<a class="ucard" href="#/u/${FEATURED.username}"><span class="avatar" style="background:${MM.avatarColor(FEATURED.username)}">${FEATURED.name[0]}</span><span style="min-width:0"><b>${esc(FEATURED.name)}</b><span class="m">Starter map · ${FEATURED.synced ? "synced from Letterboxd" : "hand-checked settings"}</span></span><em><b>${FEATURED.films.length}</b><br>films</em></a>`;
   if(!sb){
     el.innerHTML = `<h2 class="h">People</h2><p class="hint">Accounts aren't switched on for this site yet, so there's one map to explore.</p><div class="list">${starter}</div>`;
     return;
@@ -1191,6 +1191,26 @@ async function route(){
   if(a === "account"){ setNav("account"); showPanel("account"); if(!viewing.owner) showFeaturedOrMine(); return renderAccount(); }
   setNav("home"); showPanel("map"); showFeaturedOrMine();
 }
+// The starter map is @mattgoold's Letterboxd, kept in sync on the server (daily-sync → starter_logs).
+// Until it loads (or if it can't), the hand-checked list in featured.js stands in.
+async function loadStarter(){
+  if(!sb) return;
+  try{
+    const {data:info} = await sb.from("starters").select("*").eq("username", FEATURED.username).maybeSingle();
+    const rows = [];
+    for(let from=0; ; from+=1000){
+      const {data, error} = await sb.from("starter_logs").select("*").eq("map", FEATURED.username).order("watched_on", {ascending:false, nullsFirst:false}).order("created_at", {ascending:false}).range(from, from+999);
+      if(error) throw error;
+      rows.push(...data); if(data.length < 1000) break;
+    }
+    if(rows.length < 10) return;                         // still filling: keep the stand-in
+    FEATURED.films = rows.map(fromRow);
+    FEATURED.synced = true;
+    if(info){ FEATURED.name = info.display_name || FEATURED.name; FEATURED.bio = info.bio || ""; }
+    if(viewing.owner === FEATURED){ const keep = location.hash; showMap(FEATURED, FEATURED.films, false); if(/explore/.test(keep)) renderExplore(); }
+    else if(/#\/explore/.test(location.hash)) renderExplore();
+  }catch(e){}
+}
 function showFeaturedOrMine(){
   if(cloud() || myFilms.length) return showMine();
   showMap(FEATURED, FEATURED.films, false);
@@ -1251,6 +1271,7 @@ async function boot(){
   MM.setWorld(countries);
   let rT; new ResizeObserver(()=>{ clearTimeout(rT); rT = setTimeout(()=>{ drawBase(); fitPins(false); }, 60); }).observe($(".mapwrap"));
   drawBase();
+  loadStarter();
   if(sb){
     const {data} = await sb.auth.getSession();
     sb.auth.onAuthStateChange((event, s)=>{

@@ -265,10 +265,10 @@ MM.settingCache = {
 
 // Hand-checked settings (the featured starter map). Matched by title, including alternate titles.
 MM.curated = function(det, entryTitle){
-  const F = window.FEATURED; if(!F) return null;
+  const list = window.CURATED || (window.FEATURED && window.FEATURED.films); if(!list) return null;
   const titles = [det && det.t, det && det.ot, entryTitle].filter(Boolean).map(MM.norm);
   const y = det && +det.y;
-  const f = F.films.find(x=>[x.t, ...(x.aka||[])].some(n=>titles.includes(MM.norm(n))) && !(x.y && y && Math.abs(x.y - y) > 1));
+  const f = list.find(x=>[x.t, ...(x.aka||[])].some(n=>titles.includes(MM.norm(n))) && !(x.y && y && Math.abs(x.y - y) > 1));
   if(!f) return null;
   return {p:f.p, c:f.c, cont:"", lat:f.lat, lon:f.lon, ap:f.ap ? 1 : 0, n:f.n || "", src:"curated"};
 };

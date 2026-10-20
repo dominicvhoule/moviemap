@@ -34,3 +34,6 @@ window.FEATURED = {
     {t:"Empire of the Sun",y:1987,d:"Steven Spielberg",p:"Shanghai",c:"China",lat:31.23,lon:121.47,n:"A British boy separated from his parents in Japanese-occupied Shanghai."}
   ]
 };
+// These hand-checked settings are also used when placing anyone's films. The starter map itself is
+// replaced by @mattgoold's synced Letterboxd map once it loads (starter_logs in the database).
+window.CURATED = window.FEATURED.films;
