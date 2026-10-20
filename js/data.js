@@ -381,78 +381,127 @@ async function tmdbRelated(det){
 }
 const shortPlace = s => String(s||"").replace(/\s*\([^)]*\)/g, "").split(",").pop().trim();
 
-MM.similarFrom = async function(f, iso, exclude){
-  let det = f.tmdb ? await MM.filmDetails(f.tmdb).catch(()=>null) : null;
-  if(!det && f.t){ const m = await MM.matchFilm(f.t, f.y).catch(()=>null); det = m ? await MM.filmDetails(m.id).catch(()=>null) : null; }
-  const self = det ? det.tmdb : f.tmdb;
-  // Country-wide pins ("Across Argentina", or a dashed pin on the country's middle) look across the whole country.
+// Country-wide pins ("Across Argentina", or a dashed pin on the country's middle) look across the whole country.
+function simContext(f, iso){
   const mid = MM.countryPoint(f.c);
   const countryWide = !f.p || MM.norm(f.p) === MM.norm(f.c) || MM.norm(f.p) === MM.norm(MM.displayCountry(f.c)) || !isFinite(f.lat)
     || (f.ap && mid && Math.abs(mid[0] - f.lon) < 1.5 && Math.abs(mid[1] - f.lat) < 1.5);
-  const key = `mm-sim5:${self || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
-  let pool = lsGet(key, null);
-  if(!pool){
-    const [me, related] = await Promise.all([
-      det ? profileOf(det.qid) : {g:[], s:[]},
-      det ? tmdbRelated(det).catch(()=>new Map()) : new Map()
-    ]);
-    // Titles set here: close by first, then a wider ring, then the whole country.
-    const byId = new Map();
-    const take = (rows, tier0) => rows.forEach(b=>{
-      let tier = tier0;
-      const id = b.tm ? +b.tm.value : (b.tvid ? -b.tvid.value : 0);
-      if(!id || isNaN(id) || byId.has(id)) return;
-      let where = b.locLabel ? b.locLabel.value : "";
-      // a title set in "Norway" as a whole isn't set near this pin
-      if(where && [f.c, MM.displayCountry(f.c)].some(n=>MM.norm(n) === MM.norm(where))){ where = ""; tier = 2; }
-      byId.set(id, {tmdb:id, tier, where, links:b.links ? +b.links.value : 0, made:!!b.made,
-        g:(b.gs && b.gs.value ? b.gs.value.split(" ") : []).map(qidOf), s:(b.ss && b.ss.value ? b.ss.value.split(" ") : []).map(qidOf)});
-    });
-    if(!countryWide && isFinite(f.lat)){
-      take(await titlesSetNear(f.lat, f.lon, f.ap ? 120 : 40, iso).catch(()=>[]), 0);
-      if(byId.size < 12) take(await titlesSetNear(f.lat, f.lon, 250, iso).catch(()=>[]), 1);
-    }
-    if(byId.size < 12) take(await titlesSetIn(iso).catch(()=>[]), 2);
-    byId.delete(self);
-    // Score: shared genres and shared subject or period matter most, then TMDB thinking they're alike,
-    // then being made in this country, then how close and how well known.
-    const myG = new Set(me.g), myS = new Set(me.s);
-    const scored = [...byId.values()].map(c=>{
-      const genre = myG.size ? c.g.filter(g=>myG.has(g)).length / Math.max(1, Math.min(myG.size, c.g.length || 1)) : 0;
-      const topic = Math.min(2, c.s.filter(x=>myS.has(x)).length);
-      const rel = related.has(c.tmdb) ? 2.5 - related.get(c.tmdb).rank * 0.05 : 0;
-      return Object.assign(c, {score: genre*3 + topic*2.5 + rel + (c.made ? 1.2 : 0) + Math.log10(1 + c.links) * 0.5 - c.tier * 0.9});
-    }).sort((a,b)=>b.score - a.score);
-    pool = scored.slice(0, 30).map(c=>({tmdb:c.tmdb, where:c.tier < 2 ? shortPlace(c.where) : "", tier:c.tier}));
-    // Fill with TMDB's look-alikes from the same country, then the country's best known.
-    const relIds = [...related.keys()].filter(id=>id !== self && !byId.has(id)).slice(0, 12);
-    for(const id of relIds){
-      const d = await MM.filmDetails(id).catch(()=>null);
-      if(d && (d.iso || []).includes(iso)) pool.push({tmdb:id, where:"", tier:3, t:d.t, y:String(d.y||""), poster:d.poster});
-    }
-    lsSet(key, pool);
+  const key = `s6:${f.tmdb || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
+  return {countryWide, key};
+}
+const withDetails = (c, d) => Object.assign({}, c, {t:d.t, y:String(d.y || ""), poster:d.poster});
+
+// Works out the ranked list for one title (slow: several Wikidata and TMDB lookups). Every entry
+// comes back with its title, year and poster, so showing it later needs no more lookups.
+async function buildPool(f, iso, ctx){
+  let det = f.tmdb ? await MM.filmDetails(f.tmdb).catch(()=>null) : null;
+  if(!det && f.t){ const m = await MM.matchFilm(f.t, f.y).catch(()=>null); det = m ? await MM.filmDetails(m.id).catch(()=>null) : null; }
+  const self = det ? det.tmdb : f.tmdb;
+  const [me, related] = await Promise.all([
+    det ? profileOf(det.qid) : {g:[], s:[]},
+    det ? tmdbRelated(det).catch(()=>new Map()) : new Map()
+  ]);
+  // Titles set here: close by first, then a wider ring, then the whole country.
+  const byId = new Map();
+  const take = (rows, tier0) => rows.forEach(b=>{
+    let tier = tier0;
+    const id = b.tm ? +b.tm.value : (b.tvid ? -b.tvid.value : 0);
+    if(!id || isNaN(id) || byId.has(id)) return;
+    let where = b.locLabel ? b.locLabel.value : "";
+    // a title set in "Norway" as a whole isn't set near this pin
+    if(where && [f.c, MM.displayCountry(f.c)].some(n=>MM.norm(n) === MM.norm(where))){ where = ""; tier = 2; }
+    byId.set(id, {tmdb:id, tier, where, links:b.links ? +b.links.value : 0, made:!!b.made,
+      g:(b.gs && b.gs.value ? b.gs.value.split(" ") : []).map(qidOf), s:(b.ss && b.ss.value ? b.ss.value.split(" ") : []).map(qidOf)});
+  });
+  if(!ctx.countryWide){
+    take(await titlesSetNear(f.lat, f.lon, f.ap ? 120 : 40, iso).catch(()=>[]), 0);
+    if(byId.size < 12) take(await titlesSetNear(f.lat, f.lon, 250, iso).catch(()=>[]), 1);
   }
-  // Details (title, year, poster) for the best few that aren't already on the map.
-  const skip = new Set([self, f.tmdb].filter(Boolean)), out = [];
-  for(const c of pool){
+  if(byId.size < 12) take(await titlesSetIn(iso).catch(()=>[]), 2);
+  byId.delete(self);
+  // Score: shared genres and shared subject or period matter most, then TMDB thinking they're alike,
+  // then being made in this country, then how close and how well known.
+  const myG = new Set(me.g), myS = new Set(me.s);
+  const scored = [...byId.values()].map(c=>{
+    const genre = myG.size ? c.g.filter(g=>myG.has(g)).length / Math.max(1, Math.min(myG.size, c.g.length || 1)) : 0;
+    const topic = Math.min(2, c.s.filter(x=>myS.has(x)).length);
+    const rel = related.has(c.tmdb) ? 2.5 - related.get(c.tmdb).rank * 0.05 : 0;
+    return Object.assign(c, {score: genre*3 + topic*2.5 + rel + (c.made ? 1.2 : 0) + Math.log10(1 + c.links) * 0.5 - c.tier * 0.9});
+  }).sort((a,b)=>b.score - a.score);
+  // Posters for the best 16, and TMDB's look-alikes checked for the country, all at once.
+  const best = scored.slice(0, 16);
+  const relIds = [...related.keys()].filter(id=>id !== self && !byId.has(id)).slice(0, 12);
+  const [bestDets, relDets, favs] = await Promise.all([
+    Promise.all(best.map(c=>MM.filmDetails(c.tmdb).catch(()=>null))),
+    Promise.all(relIds.map(id=>MM.filmDetails(id).catch(()=>null))),
+    countryFavourites(f, det, iso).catch(()=>[])
+  ]);
+  const pool = [];
+  best.forEach((c, i)=>{ const d = bestDets[i]; if(d && d.poster) pool.push(withDetails({tmdb:c.tmdb, where:c.tier < 2 ? shortPlace(c.where) : "", tier:c.tier}, d)); });
+  relDets.forEach((d, i)=>{ if(d && d.poster && (d.iso || []).includes(iso)) pool.push(withDetails({tmdb:relIds[i], where:"", tier:3}, d)); });
+  favs.slice(0, 12).forEach(m=>pool.push({tmdb:m.tmdb, t:m.t, y:m.y, poster:m.poster, where:"", tier:4}));
+  return pool.filter((m, i, a)=>m.tmdb !== self && a.findIndex(x=>x.tmdb === m.tmdb) === i);
+}
+
+// Saved lists: this browser first, then the shared copy in the database (anyone who opened this
+// title before), and only then work it out. Two requests for the same title share one lookup.
+const simInflight = new Map();
+async function getPool(f, iso){
+  const ctx = simContext(f, iso);
+  const local = lsGet("mm-" + ctx.key, null); if(local) return local;
+  if(simInflight.has(ctx.key)) return simInflight.get(ctx.key);
+  const job = (async ()=>{
+    let pool = null;
+    if(MM.remoteSuggestions){ try{ pool = await MM.remoteSuggestions(ctx.key); }catch(e){} }
+    if(!pool){
+      pool = await buildPool(f, iso, ctx);
+      if(pool.length && MM.saveRemoteSuggestions){ MM.saveRemoteSuggestions(ctx.key, pool).catch(()=>{}); }
+    }
+    if(pool.length) lsSet("mm-" + ctx.key, pool);
+    return pool;
+  })();
+  simInflight.set(ctx.key, job);
+  try{ return await job; } finally { simInflight.delete(ctx.key); }
+}
+
+function pickSimilar(pool, f, iso, exclude){
+  const ctx = simContext(f, iso);
+  const out = [], seen = new Set([f.tmdb]);
+  for(const m of pool){
     if(out.length >= 6) break;
-    if(skip.has(c.tmdb)) continue;
-    let m = c;
-    if(!c.poster){ const d = await MM.filmDetails(c.tmdb).catch(()=>null); if(!d) continue; m = Object.assign({}, c, {t:d.t, y:String(d.y||""), poster:d.poster}); }
-    if(!m.poster || (exclude && exclude(m))) continue;
-    out.push(m); skip.add(m.tmdb);
-  }
-  if(out.length < 6){
-    const old = await countryFavourites(f, det, iso).catch(()=>[]);
-    for(const m of old){ if(out.length >= 6) break; if(!skip.has(m.tmdb) && !(exclude && exclude(m))){ out.push(m); skip.add(m.tmdb); } }
+    if(seen.has(m.tmdb) || (exclude && exclude(m))) continue;
+    out.push(m); seen.add(m.tmdb);
   }
   // Heading: "More set in Buenos Aires" when most picks share this place, else "More from Argentina".
   const near = out.filter(m=>m.tier === 0 && m.where);
   const counts = {}; near.forEach(m=>counts[m.where] = (counts[m.where] || 0) + 1);
   const top = Object.keys(counts).sort((a,b)=>counts[b] - counts[a])[0];
   const own = Object.keys(counts).find(w=>MM.norm(w) === MM.norm(shortPlace(f.p)));
-  const here = !countryWide && near.length >= 3 ? (own || (counts[top] >= 2 ? top : shortPlace(f.p))) : "";
+  const here = !ctx.countryWide && near.length >= 3 ? (own || (counts[top] >= 2 ? top : shortPlace(f.p))) : "";
   return {list: out, heading: here ? "More set in " + here : "More from " + MM.displayCountry(f.c)};
+}
+
+// The full, place-based suggestions (may take a few seconds the first time).
+MM.similarFrom = async (f, iso, exclude) => pickSimilar(await getPool(f, iso), f, iso, exclude);
+// Already worked out on this device? Then show it straight away.
+MM.similarSaved = (f, iso, exclude) => { const p = lsGet("mm-" + simContext(f, iso).key, null); return p ? pickSimilar(p, f, iso, exclude) : null; };
+// A quick stand-in while the full list is worked out: well-known titles from the country (one TMDB call).
+MM.similarQuick = async (f, iso, exclude) => {
+  const det = f.tmdb ? await MM.filmDetails(f.tmdb).catch(()=>null) : null;
+  const favs = await countryFavourites(f, det, iso).catch(()=>[]);
+  return pickSimilar(favs.map(m=>Object.assign({}, m, {where:"", tier:4})), f, iso, exclude);
+};
+// Work out suggestions for a whole map in the background, one title at a time, so they're ready on click.
+let prefetchRun = 0;
+MM.prefetchSimilar = async function(films){
+  const run = ++prefetchRun;
+  for(const f of films){
+    if(run !== prefetchRun) return;                // a newer map took over
+    const iso = MM.isoFor(f.c); if(!iso) continue;
+    if(lsGet("mm-" + simContext(f, iso).key, null)) continue;
+    try{ await getPool(f, iso); }catch(e){}
+    await MM.sleep(600);                            // stay gentle with Wikidata
+  }
 };
 
 // Well-known titles from the country that share the film's genres (the old suggestions; now a filler).

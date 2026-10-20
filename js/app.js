@@ -56,6 +56,17 @@ if(sb){
     return got;
   };
   MM.aiSetting = null;   // switched on after sign-in, once the function answers
+  // Suggestions worked out by anyone are shared, so a title is only looked up once for everybody.
+  MM.remoteSuggestions = async key => {
+    const {data, error} = await sb.from("film_suggestions").select("pool,updated_at").eq("key", key).maybeSingle();
+    if(error || !data || !Array.isArray(data.pool)) return null;
+    if(Date.now() - new Date(data.updated_at).getTime() > 60*24*60*60*1000) return null;   // refresh every two months
+    return data.pool;
+  };
+  MM.saveRemoteSuggestions = async (key, pool) => {
+    if(!session) return;
+    await sb.from("film_suggestions").upsert({key, pool:pool.slice(0, 30), updated_at:new Date().toISOString()}, {onConflict:"key"});
+  };
   MM.saveRemoteSettings = async map => {
     if(!session) return;
     const rows = Object.keys(map).filter(id=>["wikidata","production"].includes(map[id].src) && !map[id].aiTried).map(id=>{ const s = map[id]; return {tmdb_id:+id, place:s.p, country:s.c, continent:s.cont||null, lat:s.lat, lon:s.lon, approx:!!s.ap, note:s.n||null, source:s.src}; });
@@ -380,16 +391,24 @@ function openFilm(f, fly){
 async function showSimilar(f){
   const iso = MM.isoFor(f.c); if(!iso) return;
   const ids = new Set(myFilms.map(x=>x.tmdb).filter(Boolean)), keys = myKeys();
-  let res = null;
-  try{ res = await MM.similarFrom(f, iso, m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))); }catch(e){ return; }
-  const list = res && res.list || [];
+  const skip = m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m));
   const box = $("#more");
-  if(!box || selected !== f || !list.length) return;
-  box.hidden = false;
-  box.innerHTML = `<b class="sub" style="font-size:15px">${esc(res.heading)}</b>
-    <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}${m.where ? " · " + esc(m.where) : ""}</span></button></li>`).join("")}</ul>
-    <p class="hint" style="font-size:12px">Tap one to add it to your map.</p>`;
-  box.querySelectorAll("button").forEach(b=>b.onclick = ()=>{ const m = list[+b.dataset.i]; pendingLog = {tmdb:m.tmdb, t:m.t, y:m.y}; location.hash = "#/log"; });
+  const draw = (res, loading) => {
+    const list = res && res.list || [];
+    if(!box || selected !== f || !list.length) return;
+    box.hidden = false;
+    box.innerHTML = `<b class="sub" style="font-size:15px">${esc(res.heading)}</b>
+      <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}${m.where ? " · " + esc(m.where) : ""}</span></button></li>`).join("")}</ul>
+      <p class="hint" style="font-size:12px">${loading ? "Finding titles set near here…" : "Tap one to add it to your map."}</p>`;
+    box.querySelectorAll("button").forEach(b=>b.onclick = ()=>{ const m = list[+b.dataset.i]; pendingLog = {tmdb:m.tmdb, t:m.t, y:m.y}; location.hash = "#/log"; });
+  };
+  // Saved already? Show it at once. Otherwise show well-known titles from the country while the
+  // place-based list is worked out, then swap it in.
+  const saved = MM.similarSaved(f, iso, skip);
+  if(saved){ draw(saved, false); return; }
+  let done = false;
+  MM.similarQuick(f, iso, skip).then(q=>{ if(!done) draw(q, true); }).catch(()=>{});
+  try{ const res = await MM.similarFrom(f, iso, skip); done = true; draw(res, false); }catch(e){ done = true; }
 }
 function closeDetail(){ detail.hidden = true; selected = null; renderPins(); markListSelection(); }
 
@@ -481,6 +500,9 @@ function showMap(owner, films, mine){
   selected = null; detail.hidden = true; $("#q").value = "";
   kind = "all"; document.querySelectorAll(".kinds button").forEach(x=>x.setAttribute("aria-selected", String(x.dataset.k === "all")));
   renderAll(); fitPins(true);
+  // Get "More like this" ready for this map's titles in the background, newest first.
+  const list = films.slice().sort((a,b)=>String(b.created||"").localeCompare(String(a.created||"")));
+  clearTimeout(showMap.t); showMap.t = setTimeout(()=>MM.prefetchSimilar(list), 2500);
 }
 function showMine(){
   const owner = me ? Object.assign({}, me) : {name:"Your map", username:"", bio:"Saved in this browser"};
