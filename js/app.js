@@ -146,7 +146,8 @@ function initMap(){
       layout:{"text-field":["get","label"], "text-font":["Noto Sans Bold"], "text-transform":"uppercase", "text-letter-spacing":0.08,
         "text-size":["interpolate", ["linear"], ["zoom"], 1, 9, 4, 13], "text-max-width":7, "symbol-sort-key":["get","rank"],
         "text-variable-anchor":["center", "top", "bottom", "left", "right"], "text-radial-offset":0.9, "text-padding":3},
-      paint:{"text-color":["interpolate", ["linear"], ["zoom"], 4.5, "#FFFFFF", 5.5, "#111111"]},
+      paint:{"text-color":["interpolate", ["linear"], ["zoom"], 4.5, "#FFFFFF", 5.5, "#111111"],
+        "text-halo-color":["interpolate", ["linear"], ["zoom"], 4.5, "#111111", 5.5, "#E6E6E6"], "text-halo-width":1.4},
       filter:["in", ["get","name"], ["literal", []]]});
     // Invisible stand-ins for the pins, so the map's names keep clear of them instead of running under them.
     map.addImage("mm-block", {width:32, height:32, data:new Uint8Array(32 * 32 * 4)});
@@ -155,6 +156,9 @@ function initMap(){
       layout:{"icon-image":"mm-block", "icon-size":["get","s"], "icon-offset":["get","o"], "icon-allow-overlap":true, "icon-ignore-placement":false}});
     mapReady = true;
     renderPins(); fitPins(false);
+    // Keep the map credit folded away until it's clicked.
+    const fold = () => { const at = map.getContainer().querySelector(".maplibregl-ctrl-attrib"); if(at) at.classList.remove("maplibregl-compact-show"); };
+    fold(); map.once("load", fold); map.once("idle", fold);
   });
   map.on("zoomend", ()=>renderPins());
   map.on("click", ev=>{
@@ -169,13 +173,33 @@ function initMap(){
 // One label point per country (on its largest landmass), with the short name used on the map.
 const SHORT_NAMES = {"United States of America":"United States","Dem. Rep. Congo":"DR Congo","Bosnia and Herz.":"Bosnia","S. Sudan":"South Sudan","Falkland Is.":"Falklands","W. Sahara":"W. Sahara","Central African Rep.":"Central African Rep.","Dominican Rep.":"Dominican Rep.","Eq. Guinea":"Eq. Guinea","Solomon Is.":"Solomon Is."};
 let countryPointsCache = null;
+// The point deepest inside a country's land (furthest from any coast or border), so its name sits on
+// the country rather than on a bay or the sea next to it (Canada's middle is Hudson Bay).
+function deepestPoint(poly){
+  const ring = poly.coordinates[0]; if(!ring || ring.length < 4) return d3.geoCentroid(poly);
+  const xs = ring.map(p=>p[0]), ys = ring.map(p=>p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+  if(x1 - x0 > 180) return d3.geoCentroid(poly);                 // wraps the date line: keep it simple
+  const k = Math.cos((y0 + y1) / 2 * Math.PI / 180) || 1;
+  const segs = [];
+  poly.coordinates.forEach(r=>{ for(let i=1; i<r.length; i++) segs.push([r[i-1][0] * k, r[i-1][1], r[i][0] * k, r[i][1]]); });
+  const dist = (x, y) => { let m = Infinity; for(const [ax, ay, bx, by] of segs){ const dx = bx - ax, dy = by - ay, l = dx*dx + dy*dy; let t = l ? ((x - ax) * dx + (y - ay) * dy) / l : 0; t = Math.max(0, Math.min(1, t)); const ex = ax + t*dx - x, ey = ay + t*dy - y; const d = ex*ex + ey*ey; if(d < m) m = d; } return m; };
+  let best = null, bestD = -1;
+  const N = 18;
+  for(let i=1; i<N; i++) for(let j=1; j<N; j++){
+    const x = x0 + (x1 - x0) * i / N, y = y0 + (y1 - y0) * j / N;
+    if(!d3.geoContains(poly, [x, y])) continue;
+    const d = dist(x * k, y); if(d > bestD){ bestD = d; best = [x, y]; }
+  }
+  return best || d3.geoCentroid(poly);
+}
 function countryPoints(){
   if(countryPointsCache) return countryPointsCache;
   countryPointsCache = countries.map(f=>{
     const g = f.geometry; if(!g) return null;
     let part = g;
     if(g.type === "MultiPolygon"){ let best = -1; g.coordinates.forEach(c=>{ const p = {type:"Polygon", coordinates:c}, a = d3.geoArea(p); if(a > best){ best = a; part = p; } }); }
-    const c = d3.geoCentroid(part); if(!c || !isFinite(c[0])) return null;
+    const c = deepestPoint(part); if(!c || !isFinite(c[0])) return null;
     const name = f.properties.name;
     return {type:"Feature", properties:{name, label:SHORT_NAMES[name] || name, rank:-Math.round(d3.geoArea(part) * 1e4)}, geometry:{type:"Point", coordinates:c}};
   }).filter(Boolean);
