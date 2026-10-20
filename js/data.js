@@ -379,8 +379,11 @@ MM.similarFrom = async function(f, iso, exclude){
   let det = f.tmdb ? await MM.filmDetails(f.tmdb).catch(()=>null) : null;
   if(!det && f.t){ const m = await MM.matchFilm(f.t, f.y).catch(()=>null); det = m ? await MM.filmDetails(m.id).catch(()=>null) : null; }
   const self = det ? det.tmdb : f.tmdb;
-  const countryWide = !f.p || MM.norm(f.p) === MM.norm(f.c) || MM.norm(f.p) === MM.norm(MM.displayCountry(f.c));
-  const key = `mm-sim3:${self || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
+  // Country-wide pins ("Across Argentina", or a dashed pin on the country's middle) look across the whole country.
+  const mid = MM.countryPoint(f.c);
+  const countryWide = !f.p || MM.norm(f.p) === MM.norm(f.c) || MM.norm(f.p) === MM.norm(MM.displayCountry(f.c)) || !isFinite(f.lat)
+    || (f.ap && mid && Math.abs(mid[0] - f.lon) < 1.5 && Math.abs(mid[1] - f.lat) < 1.5);
+  const key = `mm-sim4:${self || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
   let pool = lsGet(key, null);
   if(!pool){
     const [myGenres, related] = await Promise.all([
@@ -389,10 +392,14 @@ MM.similarFrom = async function(f, iso, exclude){
     ]);
     // Titles set here: close by first, then a wider ring, then the whole country.
     const byId = new Map();
-    const take = (rows, tier) => rows.forEach(b=>{
+    const take = (rows, tier0) => rows.forEach(b=>{
+      let tier = tier0;
       const id = b.tm ? +b.tm.value : (b.tvid ? -b.tvid.value : 0);
       if(!id || isNaN(id) || byId.has(id)) return;
-      byId.set(id, {tmdb:id, tier, where:b.locLabel ? b.locLabel.value : "", links:b.links ? +b.links.value : 0, g:(b.gs ? b.gs.value.split(" ") : []).map(qidOf)});
+      let where = b.locLabel ? b.locLabel.value : "";
+      // a title set in "Norway" as a whole isn't set near this pin
+      if(where && [f.c, MM.displayCountry(f.c)].some(n=>MM.norm(n) === MM.norm(where))){ where = ""; tier = 2; }
+      byId.set(id, {tmdb:id, tier, where, links:b.links ? +b.links.value : 0, g:(b.gs ? b.gs.value.split(" ") : []).map(qidOf)});
     });
     if(!countryWide && isFinite(f.lat)){
       take(await titlesSetNear(f.lat, f.lon, f.ap ? 120 : 40).catch(()=>[]), 0);
