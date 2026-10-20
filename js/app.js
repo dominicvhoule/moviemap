@@ -1179,7 +1179,7 @@ async function route(){
       const {data:p} = await sb.from("profiles").select("*").eq("username", name).maybeSingle();
       if(p){ const films = await fetchLogs(p.id).catch(()=>[]); return showMap(p, films, false); }
     }
-    if(name === FEATURED.username || name === "grant") return showMap(FEATURED, FEATURED.films, false);   // "grant" was its old name
+    if(name === FEATURED.username || name === "henry" || name === "grant") return showMap(FEATURED, FEATURED.films, false);   // its old names still work
     showMap({name:"Not found", username:name, bio:"No one has this username."}, [], false);
     return;
   }
