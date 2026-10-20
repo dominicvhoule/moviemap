@@ -49,6 +49,11 @@ a:hover{color:var(--red)}
 #map{position:absolute;inset:0}
 #map.picking .maplibregl-canvas{cursor:crosshair}
 .maplibregl-ctrl-attrib{font-family:var(--f);font-size:10px}
+/* The map credit, Swiss: square, plain, hairline. */
+.maplibregl-ctrl-bottom-right .maplibregl-ctrl-attrib.maplibregl-compact{border-radius:0;background:var(--paper);box-shadow:none;border:1px solid var(--line);min-height:22px;padding:2px 26px 2px 6px}
+.maplibregl-ctrl-attrib.maplibregl-compact .maplibregl-ctrl-attrib-button{border-radius:0;background-color:transparent;width:22px;height:22px}
+.maplibregl-ctrl-bottom-right{right:8px;bottom:8px}
+.maplibregl-ctrl-attrib a{color:var(--muted)}
 /* Pins: flat red discs with a white ring (no shadows, Swiss); a count when several share a spot;
    the open film is a black marker pointing at its place. */
 .gpin{display:block;padding:0;border:0;background:none;cursor:pointer;font:inherit;line-height:0}
@@ -79,7 +84,7 @@ a:hover{color:var(--red)}
 .legend i{width:11px;height:11px;border-radius:50%;background:var(--red);display:inline-block}
 .legend i.a{background:var(--paper);border:2px dashed var(--red)}
 .legend i.s{border-radius:0}
-.legend i.c{border-radius:0;background:#C9C9C9}
+.legend i.c{border-radius:0;background:var(--visited)}
 .pickhint{position:absolute;left:50%;top:24px;transform:translateX(-50%);background:var(--red);color:#fff;padding:8px 14px;font-weight:500;font-size:14px;white-space:nowrap}
 
 /* ---------- film card: a red title block over white ---------- */

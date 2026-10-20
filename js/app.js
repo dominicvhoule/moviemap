@@ -132,11 +132,19 @@ function initMap(){
   // Restyle and pin as soon as the style arrives, without waiting for every tile to finish.
   map.once("style.load", ()=>{
     swissStyle();
-    // Countries with a film: a darker grey under the map's own labels.
+    // Countries with a film: solid black with white names, as on the original MovieMap. Zoomed in to
+    // city level, the black fades so the streets show through and the map's own names take over.
     const firstLabel = map.getStyle().layers.find(l=>l.type === "symbol");
     map.addSource("mm-countries", {type:"geojson", data:{type:"FeatureCollection", features:countries.map(unwrapFeature)}});
-    map.addLayer({id:"mm-visited", type:"fill", source:"mm-countries", paint:{"fill-color":"#111111", "fill-opacity":0.16},
+    map.addLayer({id:"mm-visited", type:"fill", source:"mm-countries",
+      paint:{"fill-color":"#111111", "fill-opacity":["interpolate", ["linear"], ["zoom"], 3.5, 1, 6, 0.14]},
       filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
+    map.addSource("mm-country-points", {type:"geojson", data:{type:"FeatureCollection", features:countryPoints()}});
+    map.addLayer({id:"mm-visited-labels", type:"symbol", source:"mm-country-points", maxzoom:6,
+      layout:{"text-field":["get","label"], "text-font":["Noto Sans Bold"], "text-transform":"uppercase", "text-letter-spacing":0.08,
+        "text-size":["interpolate", ["linear"], ["zoom"], 1, 9, 4, 13], "text-max-width":7, "symbol-sort-key":["get","rank"]},
+      paint:{"text-color":"#FFFFFF", "text-opacity":["interpolate", ["linear"], ["zoom"], 4.5, 1, 5, 0]},
+      filter:["in", ["get","name"], ["literal", []]]});
     mapReady = true;
     renderPins(); fitPins(false);
   });
@@ -150,7 +158,23 @@ function initMap(){
     cb({lon:+ll[0].toFixed(3), lat:+ll[1].toFixed(3), country: hit ? MM.displayCountry(hit.properties.name) : ""});
   });
 }
+// One label point per country (on its largest landmass), with the short name used on the map.
+const SHORT_NAMES = {"United States of America":"United States","Dem. Rep. Congo":"DR Congo","Bosnia and Herz.":"Bosnia","S. Sudan":"South Sudan","Falkland Is.":"Falklands","W. Sahara":"W. Sahara","Central African Rep.":"Central African Rep.","Dominican Rep.":"Dominican Rep.","Eq. Guinea":"Eq. Guinea","Solomon Is.":"Solomon Is."};
+let countryPointsCache = null;
+function countryPoints(){
+  if(countryPointsCache) return countryPointsCache;
+  countryPointsCache = countries.map(f=>{
+    const g = f.geometry; if(!g) return null;
+    let part = g;
+    if(g.type === "MultiPolygon"){ let best = -1; g.coordinates.forEach(c=>{ const p = {type:"Polygon", coordinates:c}, a = d3.geoArea(p); if(a > best){ best = a; part = p; } }); }
+    const c = d3.geoCentroid(part); if(!c || !isFinite(c[0])) return null;
+    const name = f.properties.name;
+    return {type:"Feature", properties:{name, label:SHORT_NAMES[name] || name, rank:-Math.round(d3.geoArea(part) * 1e4)}, geometry:{type:"Point", coordinates:c}};
+  }).filter(Boolean);
+  return countryPointsCache;
+}
 // Repaint the OpenFreeMap "liberty" style in black, white and grey, in English, without the clutter.
+let countryLabelLayers = [];
 const SW = {land:"#E6E6E6", water:"#FFFFFF", road:"#FFFFFF", casing:"#D2D2D2", building:"#D9D9D9", border:"#FFFFFF", ink:"#111111", muted:"#6E6E6E"};
 function swissStyle(){
   const set = (id, k, v) => { try{ map.setPaintProperty(id, k, v); }catch(e){} };
@@ -176,6 +200,14 @@ function swissStyle(){
       if(map.getLayoutProperty(id, "text-field")){
         map.setLayoutProperty(id, "text-field", ["coalesce", ["get","name:en"], ["get","name_en"], ["get","name:latin"], ["get","name"]]);
         const water = /water|ocean|sea|lake|marine/.test(id);
+        if(/country/.test(id)){
+          countryLabelLayers.push(id);
+          map.setLayoutProperty(id, "text-transform", "uppercase");
+          map.setLayoutProperty(id, "text-letter-spacing", 0.08);
+          map.setLayoutProperty(id, "text-font", ["Noto Sans Bold"]);
+          set(id, "text-color", SW.muted); set(id, "text-halo-color", SW.land); set(id, "text-halo-width", 1);
+          continue;
+        }
         set(id, "text-color", water ? "#9A9A9A" : /country|continent|state/.test(id) || /city|capital/.test(id) ? SW.ink : "#3A3A3A");
         set(id, "text-halo-color", water ? SW.water : SW.land);
         set(id, "text-halo-width", 1.2);
@@ -260,7 +292,11 @@ function renderPins(){
     markers.push(new maplibregl.Marker({element:pinElement(g), anchor: sel ? "bottom" : "center"}).setLngLat([g.lon, g.lat]).addTo(map));
   });
   const visited = [...new Set(viewing.films.map(f=>MM.geoName(f.c)))];
-  ["mm-visited"].forEach(id=>{ if(map.getLayer(id)) map.setFilter(id, ["in", ["get","name"], ["literal", visited]]); });
+  ["mm-visited", "mm-visited-labels"].forEach(id=>{ if(map.getLayer(id)) map.setFilter(id, ["in", ["get","name"], ["literal", visited]]); });
+  // The map's own name for a country with a film steps aside (until zoomed in) for the white one.
+  const named = [...new Set(visited.flatMap(n=>[n, MM.displayCountry(n), (countryPointsCache || []).find(p=>p.properties.name === n)?.properties.label].filter(Boolean)))];
+  const onBlack = ["any", ["in", ["get","name:en"], ["literal", named]], ["in", ["get","name"], ["literal", named]]];
+  countryLabelLayers.forEach(id=>map.setPaintProperty(id, "text-opacity", ["interpolate", ["linear"], ["zoom"], 4.5, ["case", onBlack, 0, 1], 5, 1]));
   if(previewMarker){ previewMarker.remove(); previewMarker = null; }
   if(preview){
     const el = document.createElement("div"); el.className = "gpin sel preview"; el.innerHTML = `<span class="b">${ICON.film}</span>`;
