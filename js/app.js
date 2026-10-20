@@ -118,6 +118,9 @@ let myFilms = [];
 async function reloadMine(){ try{ myFilms = await Store.load(); }catch(e){ myFilms = []; toast("Couldn't load your films. Check your connection."); } }
 const myKeys = () => new Set(myFilms.map(MM.filmKey));
 
+// The printable poster is built (js/poster.js) but switched off until it's ready to sell.
+const POSTERS = false;
+
 /* ================= map ================= */
 const svg = d3.select("#map");
 const gRoot = svg.append("g"), gLand = gRoot.append("g"), gLabels = gRoot.append("g").attr("aria-hidden","true"), gPins = gRoot.append("g");
@@ -461,7 +464,7 @@ async function renderCTA(){
   ov.hidden = true; cta.innerHTML = "";
   const o = viewing.owner || {};
   if(viewing.mine){
-    cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a><a class="btn ghost" href="#/poster">Poster</a>${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
+    cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a>${POSTERS ? `<a class="btn ghost" href="#/poster">Poster</a>` : ""}${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
     const sh = $("#share"); if(sh) sh.onclick = ()=>shareLink(profileURL(me.username), "My MovieMap");
     return;
   }
@@ -490,7 +493,7 @@ async function renderCTA(){
     };
     cta.prepend(b);
   }
-  if(viewing.films.length){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "#/poster"; a.textContent = "Poster"; cta.append(a); }
+  if(POSTERS && viewing.films.length){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "#/poster"; a.textContent = "Poster"; cta.append(a); }
   if(o.letterboxd){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "https://letterboxd.com/" + encodeURIComponent(o.letterboxd) + "/"; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Letterboxd ↗"; cta.append(a); }
 }
 function renderAll(){ setOwnerHeader(); renderPins(); renderList(); renderCTA(); }
@@ -1107,6 +1110,7 @@ async function route(){
   if(a === "explore"){ setNav("explore"); showPanel("explore"); if(!viewing.owner) showFeaturedOrMine(); return renderExplore(); }
   if(a === "log"){ setNav("log"); showPanel("log"); return renderLog(); }
   if(a === "import"){ setNav("import"); showPanel("import"); return renderImport(); }
+  if(a === "poster" && !POSTERS){ location.replace("#/"); return; }
   if(a === "poster"){ setNav(""); showPanel("poster"); if(!viewing.owner) showFeaturedOrMine(); return renderPoster(); }
   if(a === "account"){ setNav("account"); showPanel("account"); if(!viewing.owner) showFeaturedOrMine(); return renderAccount(); }
   setNav("home"); showPanel("map"); showFeaturedOrMine();
