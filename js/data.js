@@ -331,28 +331,132 @@ MM.isoFor = function(name){
   return isoMap[MM.norm(name)] || isoMap[MM.norm(MM.geoName(name))] || isoMap[MM.norm(MM.displayCountry(name))] || null;
 };
 
-// Titles from the same country that share the film's genres, best known first.
+// "More like this, from here": titles set in the same place as this one, ranked by how alike they are.
+//   1. Wikidata: titles whose story is set within a short distance of this pin (or anywhere in the
+//      country, for country-wide pins), with their genres.
+//   2. TMDB's own "recommendations" and "similar" lists for this title, which boost matching titles.
+//   3. Ranked by shared genres, a TMDB match and how well known they are. If the place is thin,
+//      TMDB's recommendations from the same country, then well-known titles from the country, fill in.
+async function wdq(query){
+  const r = await fetch("https://query.wikidata.org/sparql?format=json&query=" + encodeURIComponent(query), {headers:{Accept:"application/sparql-results+json"}});
+  return r.ok ? (await r.json()).results.bindings : [];
+}
+const MOVIE_OR_SERIES = `{ ?film wdt:P4947 ?tm . } UNION { ?film wdt:P4983 ?tvid . }`;
+async function titlesSetNear(lat, lon, km){
+  return wdq(`SELECT ?film ?tm ?tvid ?locLabel ?links (GROUP_CONCAT(DISTINCT ?g; separator=" ") AS ?gs) WHERE {
+    SERVICE wikibase:around { ?loc wdt:P625 ?c . bd:serviceParam wikibase:center "Point(${(+lon).toFixed(4)} ${(+lat).toFixed(4)})"^^geo:wktLiteral ; wikibase:radius "${km}" . }
+    ?film wdt:P840 ?loc . ${MOVIE_OR_SERIES}
+    OPTIONAL { ?film wdt:P136 ?g . } OPTIONAL { ?film wikibase:sitelinks ?links . }
+    SERVICE wikibase:label { bd:serviceParam wikibase:language "en". ?loc rdfs:label ?locLabel . }
+  } GROUP BY ?film ?tm ?tvid ?locLabel ?links ORDER BY DESC(?links) LIMIT 250`);
+}
+async function titlesSetIn(iso){
+  return wdq(`SELECT ?film ?tm ?tvid ?links (GROUP_CONCAT(DISTINCT ?g; separator=" ") AS ?gs) WHERE {
+    ?country wdt:P297 "${iso}" .
+    { ?film wdt:P840 ?country . } UNION { ?film wdt:P840 ?loc . ?loc wdt:P17 ?country . }
+    ${MOVIE_OR_SERIES}
+    OPTIONAL { ?film wdt:P136 ?g . } OPTIONAL { ?film wikibase:sitelinks ?links . }
+  } GROUP BY ?film ?tm ?tvid ?links ORDER BY DESC(?links) LIMIT 250`);
+}
+async function genresOf(qid){
+  if(!qid) return [];
+  const rows = await wdq(`SELECT ?g WHERE { wd:${qid} wdt:P136 ?g . }`).catch(()=>[]);
+  return rows.map(b=>qidOf(b.g.value));
+}
+async function tmdbRelated(det){
+  const base = (det.tv ? "/tv/" : "/movie/") + Math.abs(det.tmdb);
+  const pages = await Promise.all(["/recommendations", "/similar"].map(x=>tmdb(base + x, {}).catch(()=>null)));
+  const out = new Map();
+  pages.forEach((pg, j)=>((pg && pg.results) || []).forEach((m, i)=>{
+    const id = det.tv ? -m.id : m.id;
+    if(!out.has(id)) out.set(id, {rank:i + j*3, t:det.tv ? m.name : m.title, y:((det.tv ? m.first_air_date : m.release_date) || "").slice(0,4), poster:m.poster_path, lang:m.original_language});
+  }));
+  return out;
+}
+const shortPlace = s => String(s||"").replace(/\s*\([^)]*\)/g, "").split(",").pop().trim();
+
 MM.similarFrom = async function(f, iso, exclude){
-  const tv = MM.isTv(f.tmdb);
   let det = f.tmdb ? await MM.filmDetails(f.tmdb).catch(()=>null) : null;
   if(!det && f.t){ const m = await MM.matchFilm(f.t, f.y).catch(()=>null); det = m ? await MM.filmDetails(m.id).catch(()=>null) : null; }
+  const self = det ? det.tmdb : f.tmdb;
+  const countryWide = !f.p || MM.norm(f.p) === MM.norm(f.c) || MM.norm(f.p) === MM.norm(MM.displayCountry(f.c));
+  const key = `mm-sim3:${self || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
+  let pool = lsGet(key, null);
+  if(!pool){
+    const [myGenres, related] = await Promise.all([
+      det ? genresOf(det.qid) : [],
+      det ? tmdbRelated(det).catch(()=>new Map()) : new Map()
+    ]);
+    // Titles set here: close by first, then a wider ring, then the whole country.
+    const byId = new Map();
+    const take = (rows, tier) => rows.forEach(b=>{
+      const id = b.tm ? +b.tm.value : (b.tvid ? -b.tvid.value : 0);
+      if(!id || isNaN(id) || byId.has(id)) return;
+      byId.set(id, {tmdb:id, tier, where:b.locLabel ? b.locLabel.value : "", links:b.links ? +b.links.value : 0, g:(b.gs ? b.gs.value.split(" ") : []).map(qidOf)});
+    });
+    if(!countryWide && isFinite(f.lat)){
+      take(await titlesSetNear(f.lat, f.lon, f.ap ? 120 : 40).catch(()=>[]), 0);
+      if(byId.size < 12) take(await titlesSetNear(f.lat, f.lon, 250).catch(()=>[]), 1);
+    }
+    if(byId.size < 12) take(await titlesSetIn(iso).catch(()=>[]), 2);
+    byId.delete(self);
+    // Score: shared genres matter most, then TMDB thinking they're alike, then how close and how well known.
+    const mine = new Set(myGenres);
+    const scored = [...byId.values()].map(c=>{
+      const shared = c.g.filter(g=>mine.has(g)).length;
+      const genre = mine.size ? shared / Math.max(1, Math.min(mine.size, c.g.length || 1)) : 0;
+      const rel = related.has(c.tmdb) ? 2.5 - related.get(c.tmdb).rank * 0.05 : 0;
+      return Object.assign(c, {score: genre*4 + rel + Math.log10(1 + c.links) * 0.8 - c.tier * 0.9});
+    }).sort((a,b)=>b.score - a.score);
+    pool = scored.slice(0, 30).map(c=>({tmdb:c.tmdb, where:c.tier < 2 ? shortPlace(c.where) : "", tier:c.tier}));
+    // Fill with TMDB's look-alikes from the same country, then the country's best known.
+    const relIds = [...related.keys()].filter(id=>id !== self && !byId.has(id)).slice(0, 12);
+    for(const id of relIds){
+      const d = await MM.filmDetails(id).catch(()=>null);
+      if(d && (d.iso || []).includes(iso)) pool.push({tmdb:id, where:"", tier:3, t:d.t, y:String(d.y||""), poster:d.poster});
+    }
+    lsSet(key, pool);
+  }
+  // Details (title, year, poster) for the best few that aren't already on the map.
+  const skip = new Set([self, f.tmdb].filter(Boolean)), out = [];
+  for(const c of pool){
+    if(out.length >= 6) break;
+    if(skip.has(c.tmdb)) continue;
+    let m = c;
+    if(!c.poster){ const d = await MM.filmDetails(c.tmdb).catch(()=>null); if(!d) continue; m = Object.assign({}, c, {t:d.t, y:String(d.y||""), poster:d.poster}); }
+    if(!m.poster || (exclude && exclude(m))) continue;
+    out.push(m); skip.add(m.tmdb);
+  }
+  if(out.length < 6){
+    const old = await countryFavourites(f, det, iso).catch(()=>[]);
+    for(const m of old){ if(out.length >= 6) break; if(!skip.has(m.tmdb) && !(exclude && exclude(m))){ out.push(m); skip.add(m.tmdb); } }
+  }
+  // Heading: "More set in Buenos Aires" when most picks share this place, else "More from Argentina".
+  const near = out.filter(m=>m.tier === 0 && m.where);
+  const counts = {}; near.forEach(m=>counts[m.where] = (counts[m.where] || 0) + 1);
+  const top = Object.keys(counts).sort((a,b)=>counts[b] - counts[a])[0];
+  const here = !countryWide && near.length >= 3 ? (counts[top] >= 2 ? top : shortPlace(f.p)) : "";
+  return {list: out, heading: here ? "More set in " + here : "More from " + MM.displayCountry(f.c)};
+};
+
+// Well-known titles from the country that share the film's genres (the old suggestions; now a filler).
+async function countryFavourites(f, det, iso){
   const genres = (det && det.g || []).slice(0, 2);
   const key = `mm-sim:${iso}:${det ? det.tmdb : MM.filmKey(f)}`;
   let list = lsGet(key, null);
   if(!list){
     const base = {with_origin_country: iso, sort_by: "vote_count.desc", include_adult: "false", "vote_count.gte": "20"};
-    const path = tv || (det && det.tv) ? "/discover/tv" : "/discover/movie";
+    const path = MM.isTv(f.tmdb) || (det && det.tv) ? "/discover/tv" : "/discover/movie";
     const ask = async extra => ((await tmdb(path, Object.assign({}, base, extra))) || {}).results || [];
     let res = genres.length ? await ask({with_genres: genres.join("|")}) : [];
     if(res.length < 6) res = res.concat(await ask({}));
     const isTvPath = path === "/discover/tv";
-    list = res.map(m=>({tmdb: isTvPath ? -m.id : m.id, t: isTvPath ? m.name : m.title, y: ((isTvPath ? m.first_air_date : m.release_date) || "").slice(0,4), poster: m.poster_path}))
+    list = res.map(m=>({tmdb: isTvPath ? -m.id : m.id, t: isTvPath ? m.name : m.title, y: ((isTvPath ? m.first_air_date : m.release_date) || "").slice(0,4), poster: m.poster_path, tier:4}))
       .filter((m,i,a)=>m.poster && a.findIndex(x=>x.tmdb === m.tmdb) === i);
     lsSet(key, list.slice(0, 20));
   }
-  const skip = new Set([det && det.tmdb, f.tmdb].filter(Boolean));
-  return list.filter(m=>!skip.has(m.tmdb) && !(exclude && exclude(m))).slice(0, 6);
-};
+  return list;
+}
 
 /* ---------------- avatar colour ---------------- */
 MM.avatarColor = function(name){

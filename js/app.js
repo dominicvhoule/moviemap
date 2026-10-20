@@ -380,13 +380,14 @@ function openFilm(f, fly){
 async function showSimilar(f){
   const iso = MM.isoFor(f.c); if(!iso) return;
   const ids = new Set(myFilms.map(x=>x.tmdb).filter(Boolean)), keys = myKeys();
-  let list = [];
-  try{ list = await MM.similarFrom(f, iso, m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))); }catch(e){ return; }
+  let res = null;
+  try{ res = await MM.similarFrom(f, iso, m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))); }catch(e){ return; }
+  const list = res && res.list || [];
   const box = $("#more");
   if(!box || selected !== f || !list.length) return;
   box.hidden = false;
-  box.innerHTML = `<b class="sub" style="font-size:15px">More from ${esc(f.c)}</b>
-    <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
+  box.innerHTML = `<b class="sub" style="font-size:15px">${esc(res.heading)}</b>
+    <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}${m.where ? " · " + esc(m.where) : ""}</span></button></li>`).join("")}</ul>
     <p class="hint" style="font-size:12px">Tap one to add it to your map.</p>`;
   box.querySelectorAll("button").forEach(b=>b.onclick = ()=>{ const m = list[+b.dataset.i]; pendingLog = {tmdb:m.tmdb, t:m.t, y:m.y}; location.hash = "#/log"; });
 }
