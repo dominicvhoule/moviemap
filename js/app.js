@@ -136,62 +136,88 @@ function largestPart(g){
   g.coordinates.forEach(c=>{ const p = {type:"Polygon", coordinates:c}; const a = d3.geoArea(p); if(a > bestA){ bestA = a; best = p; } });
   return best;
 }
+// A hidden map where each country is painted in its own colour, so "is this point inside country X?" is one lookup.
+let mask = null;
+const MASK_S = 2;
+function buildMask(){
+  const c = document.createElement("canvas"); c.width = Math.ceil(W * MASK_S); c.height = Math.ceil(H * MASK_S);
+  const ctx = c.getContext("2d", {willReadFrequently:true}); ctx.setTransform(MASK_S,0,0,MASK_S,0,0);
+  const p = d3.geoPath(projection, ctx);
+  countries.forEach((f,i)=>{ const v = ((i + 1) * 40503) & 0xFFFFFF; ctx.fillStyle = "#" + v.toString(16).padStart(6,"0"); ctx.beginPath(); p(f); ctx.fill(); });
+  const px = ctx.getImageData(0, 0, c.width, c.height).data, ids = new Int16Array(c.width * c.height), back = new Map();
+  countries.forEach((f,i)=>back.set(((i + 1) * 40503) & 0xFFFFFF, i));
+  for(let j=0, n=ids.length; j<n; j++){ const v = (px[j*4] << 16) | (px[j*4+1] << 8) | px[j*4+2]; const id = px[j*4+3] === 255 ? back.get(v) : undefined; ids[j] = id === undefined ? -1 : id; }
+  mask = {w:c.width, h:c.height, ids};
+}
+const maskAt = (x, y) => { const i = Math.round(x * MASK_S), j = Math.round(y * MASK_S); return i < 0 || j < 0 || i >= mask.w || j >= mask.h ? -1 : mask.ids[j * mask.w + i]; };
+const measure = (()=>{ const ctx = document.createElement("canvas").getContext("2d");
+  ctx.font = `600 100px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  return s => (ctx.measureText(s).width + s.length * 2) / 100; })();   // width per 1px of font size, with the letter-spacing
+
 function buildLabels(){
-  labels = countries.map(f=>{
+  buildMask();
+  labels = countries.map((f, idx)=>{
     const name = f.properties.name;
     const label = SHORT_NAMES[name] ?? name;
     if(!label) return null;
     const part = largestPart(f.geometry); if(!part) return null;
     const p = path.centroid(part); if(!p || !isFinite(p[0])) return null;
     const b = path.bounds(part);
-    // Spare spots inside the country (on a 5 x 5 grid), nearest the centre first, for when a pin sits on the centre.
-    const spots = [[0,0]];
-    for(let i=1; i<5; i++) for(let j=1; j<5; j++){
-      const x = b[0][0] + (b[1][0]-b[0][0]) * i/5, y = b[0][1] + (b[1][1]-b[0][1]) * j/5;
-      const ll = projection.invert([x, y]);
-      if(ll && d3.geoContains(part, ll)) spots.push([x - p[0], y - p[1]]);
+    // Candidate spots across the country, nearest its middle first.
+    const spots = [];
+    if(maskAt(p[0], p[1]) === idx) spots.push([p[0], p[1]]);
+    const N = 11;
+    for(let i=1; i<N; i++) for(let j=1; j<N; j++){
+      const x = b[0][0] + (b[1][0]-b[0][0]) * i/N, y = b[0][1] + (b[1][1]-b[0][1]) * j/N;
+      if(maskAt(x, y) === idx) spots.push([x, y]);
     }
-    spots.sort((a,c)=>Math.hypot(a[0],a[1]) - Math.hypot(c[0],c[1]));
-    return {name, label:label.toUpperCase(), x:p[0], y:p[1], area:path.area(part), bw:b[1][0] - b[0][0], bh:b[1][1] - b[0][1], spots};
+    if(!spots.length) return null;
+    spots.sort((a,c)=>Math.hypot(a[0]-p[0], a[1]-p[1]) - Math.hypot(c[0]-p[0], c[1]-p[1]));
+    const text = label.toUpperCase();
+    return {idx, name, label:text, em:measure(text), area:path.area(part), spots};
   }).filter(Boolean).sort((a,b)=>b.area - a.area);
   gLabels.selectAll("text").data(labels, d=>d.name).join("text").attr("class","clabel").text(d=>d.label);
-  updateLabels();
+  updateLabels(true);
 }
-// Like a printed map: every country is named in a size that suits it, and a name only drops out
-// when there's no room for it at this zoom (it comes back as you zoom in).
-function updateLabels(){
-  if(!labels.length) return;
+// Like a printed map: a name sits wholly inside its own country, clear of pins and other names.
+// If it can't, it waits until you zoom in far enough for it to fit.
+let labelFrame = 0;
+function updateLabels(now){
+  if(!now){ if(!labelFrame) labelFrame = requestAnimationFrame(()=>{ labelFrame = 0; updateLabels(true); }); return; }
+  if(!labels.length || !mask) return;
   const visited = new Set(viewing.films.map(f=>MM.geoName(f.c)));
-  const pins = pinGroups.map(g=>[g.x * k, g.y * k, g.films.length > 1 ? 15 : 8]);
+  const pins = pinGroups.map(g=>[g.x * k, g.y * k, (g.films.length > 1 ? Math.min(16, 9 + Math.log2(g.films.length)*2) : 7.5) + 3]);
   const order = [...labels].sort((a,b)=>(visited.has(b.name) - visited.has(a.name)) || b.area - a.area);
   const placed = [], shown = new Map();
-  for(const d of order){
-    const side = Math.sqrt(d.area) * k;                       // rough size of the country on screen
-    const fs = Math.max(7, Math.min(13, 6 + side / 16));      // bigger countries get bigger names
-    const w = d.label.length * fs * 0.64 + 2, h = fs + 2;
-    const room = Math.max(d.bw * k * 1.35, side * 1.6);       // a name may spill a little past a narrow country
-    if(w > room || d.bh * k < fs * 0.6) continue;
-    const cx = d.x * k, cy = d.y * k;
-    // Try the centre first, then nearby spots inside big countries, so pins don't knock names off.
-    const dy = h + 4;
-    const spots = [[0,0],[0,dy],[0,-dy], ...d.spots.slice(1).map(([sx,sy])=>[sx * k, sy * k])];
-    let best = null;
-    for(const [ox, oy] of spots){
-      const box = [cx + ox - w/2, cy + oy - h/2, cx + ox + w/2, cy + oy + h/2];
-      const onPin = pins.filter(([px,py,r])=>px > box[0]-r && px < box[2]+r && py > box[1]-r && py < box[3]+r).length;
-      const onLabel = placed.some(o=>!(box[2] + 2 < o[0] || box[0] - 2 > o[2] || box[3] < o[1] || box[1] > o[3]));
-      if(onLabel) continue;
-      if(!onPin){ best = {box, ox, oy, fs}; break; }
-      if(!best || onPin < best.pins) best = {box, ox, oy, fs, pins:onPin};
+  const fits = (d, cx, cy, w, h) => {
+    // every sample point of the name's box must land on this country (sampled in screen pixels, checked on the map)
+    for(let a=0; a<=4; a++) for(let c=0; c<=2; c++){
+      if(maskAt((cx - w/2 + w*a/4) / k, (cy - h/2 + h*c/2) / k) !== d.idx) return false;
     }
-    // Countries with films always keep their name, even if a pin has to sit on part of it.
-    if(best && (!best.pins || visited.has(d.name) || side > 120)){ placed.push(best.box); shown.set(d.name, best); }
+    return true;
+  };
+  for(const d of order){
+    const side = Math.sqrt(d.area) * k;
+    const top = Math.max(7.5, Math.min(14, 6 + side / 14));
+    let done = null;
+    for(let fs = top; fs >= 7.5 && !done; fs = fs > 8.5 ? fs - 1.5 : (fs === 7.5 ? 0 : 7.5)){
+      const w = d.em * fs + 4, h = fs * 0.9 + 2;
+      for(const [sx, sy] of d.spots){
+        const cx = sx * k, cy = sy * k;
+        const box = [cx - w/2, cy - h/2, cx + w/2, cy + h/2];
+        if(pins.some(([px,py,r])=>px > box[0]-r && px < box[2]+r && py > box[1]-r && py < box[3]+r)) continue;
+        if(placed.some(o=>!(box[2] + 3 < o[0] || box[0] - 3 > o[2] || box[3] + 1 < o[1] || box[1] - 1 > o[3]))) continue;
+        if(!fits(d, cx, cy, w, h)) continue;
+        done = {box, x:sx, y:sy, fs}; break;
+      }
+    }
+    if(done){ placed.push(done.box); shown.set(d.name, done); }
   }
   gLabels.selectAll("text")
     .attr("display", d=>shown.has(d.name) ? null : "none")
     .attr("font-size", d=>shown.has(d.name) ? shown.get(d.name).fs : null)
     .classed("visited", d=>visited.has(d.name))
-    .attr("transform", d=>{ const s = shown.get(d.name) || {}; return `translate(${d.x + (s.ox||0)/k},${d.y + (s.oy||0)/k}) scale(${1/k})`; });
+    .attr("transform", d=>{ const s = shown.get(d.name); return s ? `translate(${s.x},${s.y}) scale(${1/k})` : null; });
 }
 const zoom = d3.zoom().scaleExtent([1,40]).on("zoom", ev=>{
   gRoot.attr("transform", ev.transform); k = ev.transform.k;

@@ -52,8 +52,8 @@ a:hover{color:var(--red)}
 .country.visited{fill:var(--visited)}
 .grat{fill:none;stroke:var(--graticule);stroke-width:.6;vector-effect:non-scaling-stroke}
 .sphere{fill:var(--ocean)}
-.clabel{font-family:var(--f);font-size:9px;font-weight:500;letter-spacing:.02em;fill:var(--muted);text-anchor:middle;dominant-baseline:central;pointer-events:none}
-.clabel.visited{fill:var(--label-on-visited);font-weight:700}
+.clabel{font-family:var(--f);font-size:9px;font-weight:600;letter-spacing:.02em;fill:var(--muted);stroke:var(--land);stroke-width:2.5px;stroke-linejoin:round;paint-order:stroke;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+.clabel.visited{fill:var(--label-on-visited);stroke:var(--visited);font-weight:700}
 .pin{cursor:pointer}
 .pin circle.dot{fill:var(--pin);stroke:var(--pin-ring);stroke-width:2;vector-effect:non-scaling-stroke}
 .pin rect.dot{fill:var(--pin);stroke:var(--pin-ring);stroke-width:2;vector-effect:non-scaling-stroke}
