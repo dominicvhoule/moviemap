@@ -1,6 +1,6 @@
-// Grant's hand-checked starter map, shown to visitors who aren't signed in.
+// Henry's hand-checked starter map, shown to visitors who aren't signed in.
 window.FEATURED = {
-  username:"grant", name:"Grant", featured:true,
+  username:"henry", name:"Henry", featured:true,
   bio:"Logs everything. Partial to Argentine cinema.",
   films:[
     {t:"Mayday",y:2026,d:"John Francis Daley & Jonathan Goldstein",p:"Behind Soviet lines",c:"Russia",lat:62.5,lon:40.5,ap:1,n:"A downed U.S. Navy pilot stranded in Soviet territory, 1987. The film never names an exact spot, so this pin is approximate."},
