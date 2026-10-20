@@ -342,26 +342,32 @@ async function wdq(query){
   return r.ok ? (await r.json()).results.bindings : [];
 }
 const MOVIE_OR_SERIES = `{ ?film wdt:P4947 ?tm . } UNION { ?film wdt:P4983 ?tvid . }`;
-async function titlesSetNear(lat, lon, km){
-  return wdq(`SELECT ?film ?tm ?tvid ?locLabel ?links (GROUP_CONCAT(DISTINCT ?g; separator=" ") AS ?gs) WHERE {
+const EXTRA_COLS = `(GROUP_CONCAT(DISTINCT ?g; separator=" ") AS ?gs) (GROUP_CONCAT(DISTINCT ?s; separator=" ") AS ?ss) (SAMPLE(?oc) AS ?made)`;
+const EXTRA_WHERE = iso => `OPTIONAL { ?film wdt:P136 ?g . } OPTIONAL { ?film wdt:P921|wdt:P2408 ?s . }
+    OPTIONAL { ?film wdt:P495 ?oc . ?oc wdt:P297 "${iso}" . } OPTIONAL { ?film wikibase:sitelinks ?links . }`;
+async function titlesSetNear(lat, lon, km, iso){
+  return wdq(`SELECT ?film ?tm ?tvid ?locLabel ?links ${EXTRA_COLS} WHERE {
     SERVICE wikibase:around { ?loc wdt:P625 ?c . bd:serviceParam wikibase:center "Point(${(+lon).toFixed(4)} ${(+lat).toFixed(4)})"^^geo:wktLiteral ; wikibase:radius "${km}" . }
     ?film wdt:P840 ?loc . ${MOVIE_OR_SERIES}
-    OPTIONAL { ?film wdt:P136 ?g . } OPTIONAL { ?film wikibase:sitelinks ?links . }
+    ${EXTRA_WHERE(iso)}
     SERVICE wikibase:label { bd:serviceParam wikibase:language "en". ?loc rdfs:label ?locLabel . }
   } GROUP BY ?film ?tm ?tvid ?locLabel ?links ORDER BY DESC(?links) LIMIT 250`);
 }
 async function titlesSetIn(iso){
-  return wdq(`SELECT ?film ?tm ?tvid ?links (GROUP_CONCAT(DISTINCT ?g; separator=" ") AS ?gs) WHERE {
+  return wdq(`SELECT ?film ?tm ?tvid ?links ${EXTRA_COLS} WHERE {
     ?country wdt:P297 "${iso}" .
     { ?film wdt:P840 ?country . } UNION { ?film wdt:P840 ?loc . ?loc wdt:P17 ?country . }
     ${MOVIE_OR_SERIES}
-    OPTIONAL { ?film wdt:P136 ?g . } OPTIONAL { ?film wikibase:sitelinks ?links . }
+    ${EXTRA_WHERE(iso)}
   } GROUP BY ?film ?tm ?tvid ?links ORDER BY DESC(?links) LIMIT 250`);
 }
-async function genresOf(qid){
-  if(!qid) return [];
-  const rows = await wdq(`SELECT ?g WHERE { wd:${qid} wdt:P136 ?g . }`).catch(()=>[]);
-  return rows.map(b=>qidOf(b.g.value));
+// The seed title's genres, and its topics and periods (World War II, the Holocaust, 1980s...).
+async function profileOf(qid){
+  if(!qid) return {g:[], s:[]};
+  const rows = await wdq(`SELECT ?p ?v WHERE { VALUES ?p { wdt:P136 wdt:P921 wdt:P2408 } wd:${qid} ?p ?v . }`).catch(()=>[]);
+  const g = [], t = [];
+  rows.forEach(b=>{ const v = qidOf(b.v.value); (b.p.value.endsWith("P136") ? g : t).push(v); });
+  return {g, s:t};
 }
 async function tmdbRelated(det){
   const base = (det.tv ? "/tv/" : "/movie/") + Math.abs(det.tmdb);
@@ -383,11 +389,11 @@ MM.similarFrom = async function(f, iso, exclude){
   const mid = MM.countryPoint(f.c);
   const countryWide = !f.p || MM.norm(f.p) === MM.norm(f.c) || MM.norm(f.p) === MM.norm(MM.displayCountry(f.c)) || !isFinite(f.lat)
     || (f.ap && mid && Math.abs(mid[0] - f.lon) < 1.5 && Math.abs(mid[1] - f.lat) < 1.5);
-  const key = `mm-sim4:${self || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
+  const key = `mm-sim5:${self || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
   let pool = lsGet(key, null);
   if(!pool){
-    const [myGenres, related] = await Promise.all([
-      det ? genresOf(det.qid) : [],
+    const [me, related] = await Promise.all([
+      det ? profileOf(det.qid) : {g:[], s:[]},
       det ? tmdbRelated(det).catch(()=>new Map()) : new Map()
     ]);
     // Titles set here: close by first, then a wider ring, then the whole country.
@@ -399,21 +405,23 @@ MM.similarFrom = async function(f, iso, exclude){
       let where = b.locLabel ? b.locLabel.value : "";
       // a title set in "Norway" as a whole isn't set near this pin
       if(where && [f.c, MM.displayCountry(f.c)].some(n=>MM.norm(n) === MM.norm(where))){ where = ""; tier = 2; }
-      byId.set(id, {tmdb:id, tier, where, links:b.links ? +b.links.value : 0, g:(b.gs ? b.gs.value.split(" ") : []).map(qidOf)});
+      byId.set(id, {tmdb:id, tier, where, links:b.links ? +b.links.value : 0, made:!!b.made,
+        g:(b.gs && b.gs.value ? b.gs.value.split(" ") : []).map(qidOf), s:(b.ss && b.ss.value ? b.ss.value.split(" ") : []).map(qidOf)});
     });
     if(!countryWide && isFinite(f.lat)){
-      take(await titlesSetNear(f.lat, f.lon, f.ap ? 120 : 40).catch(()=>[]), 0);
-      if(byId.size < 12) take(await titlesSetNear(f.lat, f.lon, 250).catch(()=>[]), 1);
+      take(await titlesSetNear(f.lat, f.lon, f.ap ? 120 : 40, iso).catch(()=>[]), 0);
+      if(byId.size < 12) take(await titlesSetNear(f.lat, f.lon, 250, iso).catch(()=>[]), 1);
     }
     if(byId.size < 12) take(await titlesSetIn(iso).catch(()=>[]), 2);
     byId.delete(self);
-    // Score: shared genres matter most, then TMDB thinking they're alike, then how close and how well known.
-    const mine = new Set(myGenres);
+    // Score: shared genres and shared subject or period matter most, then TMDB thinking they're alike,
+    // then being made in this country, then how close and how well known.
+    const myG = new Set(me.g), myS = new Set(me.s);
     const scored = [...byId.values()].map(c=>{
-      const shared = c.g.filter(g=>mine.has(g)).length;
-      const genre = mine.size ? shared / Math.max(1, Math.min(mine.size, c.g.length || 1)) : 0;
+      const genre = myG.size ? c.g.filter(g=>myG.has(g)).length / Math.max(1, Math.min(myG.size, c.g.length || 1)) : 0;
+      const topic = Math.min(2, c.s.filter(x=>myS.has(x)).length);
       const rel = related.has(c.tmdb) ? 2.5 - related.get(c.tmdb).rank * 0.05 : 0;
-      return Object.assign(c, {score: genre*4 + rel + Math.log10(1 + c.links) * 0.8 - c.tier * 0.9});
+      return Object.assign(c, {score: genre*3 + topic*2.5 + rel + (c.made ? 1.2 : 0) + Math.log10(1 + c.links) * 0.5 - c.tier * 0.9});
     }).sort((a,b)=>b.score - a.score);
     pool = scored.slice(0, 30).map(c=>({tmdb:c.tmdb, where:c.tier < 2 ? shortPlace(c.where) : "", tier:c.tier}));
     // Fill with TMDB's look-alikes from the same country, then the country's best known.
@@ -442,7 +450,8 @@ MM.similarFrom = async function(f, iso, exclude){
   const near = out.filter(m=>m.tier === 0 && m.where);
   const counts = {}; near.forEach(m=>counts[m.where] = (counts[m.where] || 0) + 1);
   const top = Object.keys(counts).sort((a,b)=>counts[b] - counts[a])[0];
-  const here = !countryWide && near.length >= 3 ? (counts[top] >= 2 ? top : shortPlace(f.p)) : "";
+  const own = Object.keys(counts).find(w=>MM.norm(w) === MM.norm(shortPlace(f.p)));
+  const here = !countryWide && near.length >= 3 ? (own || (counts[top] >= 2 ? top : shortPlace(f.p))) : "";
   return {list: out, heading: here ? "More set in " + here : "More from " + MM.displayCountry(f.c)};
 };
 
