@@ -145,9 +145,9 @@ function initMap(){
     map.addLayer({id:"mm-visited-labels", type:"symbol", source:"mm-country-points", maxzoom:7,
       layout:{"text-field":["get","label"], "text-font":["Noto Sans Bold"], "text-transform":"uppercase", "text-letter-spacing":0.08,
         "text-size":["interpolate", ["linear"], ["zoom"], 1, 9, 4, 13], "text-max-width":7, "symbol-sort-key":["get","rank"],
-        "text-variable-anchor":["center", "top", "bottom", "left", "right"], "text-radial-offset":0.9, "text-padding":3},
+        "text-padding":2},
       paint:{"text-color":["interpolate", ["linear"], ["zoom"], 4.5, "#FFFFFF", 5.5, "#111111"],
-        "text-halo-color":["interpolate", ["linear"], ["zoom"], 4.5, "#111111", 5.5, "#E6E6E6"], "text-halo-width":1.4},
+        "text-halo-color":["interpolate", ["linear"], ["zoom"], 4.5, "rgba(17,17,17,0)", 5.5, "#E6E6E6"], "text-halo-width":1},
       filter:["in", ["get","name"], ["literal", []]]});
     // Invisible stand-ins for the pins, so the map's names keep clear of them instead of running under them.
     map.addImage("mm-block", {width:32, height:32, data:new Uint8Array(32 * 32 * 4)});
@@ -173,6 +173,18 @@ function initMap(){
 // One label point per country (on its largest landmass), with the short name used on the map.
 const SHORT_NAMES = {"United States of America":"United States","Dem. Rep. Congo":"DR Congo","Bosnia and Herz.":"Bosnia","S. Sudan":"South Sudan","Falkland Is.":"Falklands","W. Sahara":"W. Sahara","Central African Rep.":"Central African Rep.","Dominican Rep.":"Dominican Rep.","Eq. Guinea":"Eq. Guinea","Solomon Is.":"Solomon Is."};
 let countryPointsCache = null;
+// How much land runs across (west-east) and up (south-north) through a point, in degrees, so we can
+// tell whether a name written there fits inside the country.
+function landRun(poly, [x, y]){
+  const xs = [], ys = [];
+  poly.coordinates.forEach(r=>{ for(let i=1; i<r.length; i++){
+    const [ax, ay] = r[i-1], [bx, by] = r[i];
+    if((ay > y) !== (by > y)) xs.push(ax + (y - ay) * (bx - ax) / (by - ay));
+    if((ax > x) !== (bx > x)) ys.push(ay + (x - ax) * (by - ay) / (bx - ax));
+  } });
+  const span = (list, v) => { list.sort((a,b)=>a-b); for(let i=0; i+1<list.length; i+=2) if(list[i] <= v && v <= list[i+1]) return list[i+1] - list[i]; return 0; };
+  return [span(xs, x), span(ys, y)];
+}
 // The point deepest inside a country's land (furthest from any coast or border), so its name sits on
 // the country rather than on a bay or the sea next to it (Canada's middle is Hudson Bay).
 function deepestPoint(poly){
@@ -201,7 +213,8 @@ function countryPoints(){
     if(g.type === "MultiPolygon"){ let best = -1; g.coordinates.forEach(c=>{ const p = {type:"Polygon", coordinates:c}, a = d3.geoArea(p); if(a > best){ best = a; part = p; } }); }
     const c = deepestPoint(part); if(!c || !isFinite(c[0])) return null;
     const name = f.properties.name;
-    return {type:"Feature", properties:{name, label:SHORT_NAMES[name] || name, rank:-Math.round(d3.geoArea(part) * 1e4)}, geometry:{type:"Point", coordinates:c}};
+    const [w, h] = landRun(part, c);
+    return {type:"Feature", properties:{name, label:SHORT_NAMES[name] || name, rank:-Math.round(d3.geoArea(part) * 1e4), w, h}, geometry:{type:"Point", coordinates:c}};
   }).filter(Boolean);
   return countryPointsCache;
 }
@@ -334,7 +347,21 @@ function renderPins(){
     return {type:"Feature", properties:{s, o:[0, sel ? -21 / s : 0]}, geometry:{type:"Point", coordinates:[g.lon, g.lat]}};
   })});
   const visited = [...new Set(viewing.films.map(f=>MM.geoName(f.c)))];
-  ["mm-visited", "mm-visited-labels"].forEach(id=>{ if(map.getLayer(id)) map.setFilter(id, ["in", ["get","name"], ["literal", visited]]); });
+  if(map.getLayer("mm-visited")) map.setFilter("mm-visited", ["in", ["get","name"], ["literal", visited]]);
+  // A name is only written where it fits inside its country at this zoom, like a printed map;
+  // smaller countries get theirs as you zoom in.
+  const z = map.getZoom(), pxPerDeg = 512 * Math.pow(2, z) / 360;
+  const fs = Math.max(9, Math.min(13, 9 + (z - 1) * 4 / 3));
+  const set = new Set(visited);
+  const fits = (countryPointsCache || []).filter(p=>{
+    const q = p.properties; if(!set.has(q.name)) return false;
+    if(z >= 5) return true;
+    const lat = p.geometry.coordinates[1] * Math.PI / 180;
+    const wPx = q.w * pxPerDeg, hPx = q.h * pxPerDeg / Math.cos(lat);
+    const textW = String(q.label).length * fs * 0.78 + 6;
+    return textW <= wPx * 0.92 && fs * 1.6 <= hPx;
+  }).map(p=>p.properties.name);
+  if(map.getLayer("mm-visited-labels")) map.setFilter("mm-visited-labels", ["in", ["get","name"], ["literal", fits]]);
   // The map's own name for a country with a film is left out entirely (not just hidden, which would
   // still take up room), so the white name has the space to itself.
   const named = [...new Set(visited.flatMap(n=>[n, MM.displayCountry(n), (countryPointsCache || []).find(p=>p.properties.name === n)?.properties.label].filter(Boolean)))];
