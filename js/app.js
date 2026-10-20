@@ -592,7 +592,7 @@ async function originsOf(films){
 }
 const madeLine = f => f.made && f.made.length ? "Made in " + f.made.slice(0, 2).map(regionName).join(" and ") + (f.made.length > 2 ? " and others" : "") : "Where it was made isn't on record";
 function filmRows(list){
-  return list.map((f,i)=>`<li><button type="button" data-i="${i}"><span class="th" ${f.poster ? `style="background-image:url('${MM.poster(f.poster,"w154")}')"` : ""}></span><span style="min-width:0"><b>${esc(f.t)}</b><span class="meta">${esc(f.p && f.p !== f.c ? f.p : "")}${f.p && f.p !== f.c ? " · " : ""}${esc(f._away ? madeLine(f) : "")}</span></span><span class="r"><em>${esc(f.y)}</em></span></button></li>`).join("");
+  return list.map((f,i)=>`<li><button type="button" data-i="${i}"><span class="th" ${f.poster ? `style="background-image:url('${MM.poster(f.poster,"w154")}')"` : ""}></span><span style="min-width:0"><b>${esc(f.t)}</b><span class="meta">${esc([f.p && f.p !== f.c ? f.p : "", f._away ? madeLine(f) : ""].filter(Boolean).join(" · "))}</span></span><span class="r"><em>${esc(f.y)}</em></span></button></li>`).join("");
 }
 async function openCountry(geo){
   const films = viewing.films.filter(f=>geoOf(f) === geo);
