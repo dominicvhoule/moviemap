@@ -60,7 +60,7 @@ MM.renderPoster = function(opts){
   ctx.fillStyle = T.ink; ctx.font = F.body(48, 700);
   ctx.fillText("MovieMap", M + 72, y);
   ctx.fillStyle = T.muted; ctx.font = F.body(48, 400);
-  ctx.fillText("Every film has a place", M + 72 + ctx.measureText("MovieMap  ").width + 40, y);
+  ctx.fillText("See the world one film at a time", M + 72 + ctx.measureText("MovieMap  ").width + 40, y);
   y += 60;
   ctx.fillStyle = T.rule; ctx.fillRect(M, y, W - 2*M, 4);
   y += 30;
