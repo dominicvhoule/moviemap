@@ -174,9 +174,13 @@ function buildLabels(){
     if(!spots.length) return null;
     spots.sort((a,c)=>Math.hypot(a[0]-p[0], a[1]-p[1]) - Math.hypot(c[0]-p[0], c[1]-p[1]));
     const text = label.toUpperCase();
-    return {idx, name, label:text, em:measure(text), area:path.area(part), spots};
+    // One line, or two for longer names with a space (SAUDI / ARABIA), like an atlas.
+    const forms = [[text]];
+    const sp = [...text.matchAll(/ /g)].map(m=>m.index);
+    if(sp.length){ const at = sp.reduce((a,b)=>Math.abs(b - text.length/2) < Math.abs(a - text.length/2) ? b : a); forms.push([text.slice(0, at), text.slice(at + 1)]); }
+    return {idx, name, label:text, forms:forms.map(lines=>({lines, em:Math.max(...lines.map(measure))})), area:path.area(part), spots};
   }).filter(Boolean).sort((a,b)=>b.area - a.area);
-  gLabels.selectAll("text").data(labels, d=>d.name).join("text").attr("class","clabel").text(d=>d.label);
+  gLabels.selectAll("text").data(labels, d=>d.name).join("text").attr("class","clabel");
   updateLabels(true);
 }
 // Like a printed map: a name sits wholly inside its own country, clear of pins and other names.
@@ -190,29 +194,41 @@ function updateLabels(now){
   const order = [...labels].sort((a,b)=>(visited.has(b.name) - visited.has(a.name)) || b.area - a.area);
   const placed = [], shown = new Map();
   const fits = (d, cx, cy, w, h) => {
-    // every sample point of the name's box must land on this country (sampled in screen pixels, checked on the map)
-    for(let a=0; a<=4; a++) for(let c=0; c<=2; c++){
-      if(maskAt((cx - w/2 + w*a/4) / k, (cy - h/2 + h*c/2) / k) !== d.idx) return false;
+    // every sample point of the name's box must land on this country (sampled in screen pixels, checked on the map);
+    // the very ends of the letters may touch the border
+    const x0 = cx - w/2 + 1.5, x1 = cx + w/2 - 1.5, rows = h > 14 ? 4 : 2;
+    for(let a=0; a<=6; a++) for(let c=0; c<=rows; c++){
+      if(maskAt((x0 + (x1 - x0)*a/6) / k, (cy - h/2 + h*c/rows) / k) !== d.idx) return false;
     }
     return true;
   };
   for(const d of order){
     const side = Math.sqrt(d.area) * k;
-    const top = Math.max(7.5, Math.min(14, 6 + side / 14));
+    const top = Math.max(7, Math.min(14, 6 + side / 14));
     let done = null;
-    for(let fs = top; fs >= 7.5 && !done; fs = fs > 8.5 ? fs - 1.5 : (fs === 7.5 ? 0 : 7.5)){
-      const w = d.em * fs + 4, h = fs * 0.9 + 2;
-      for(const [sx, sy] of d.spots){
-        const cx = sx * k, cy = sy * k;
-        const box = [cx - w/2, cy - h/2, cx + w/2, cy + h/2];
-        if(pins.some(([px,py,r])=>px > box[0]-r && px < box[2]+r && py > box[1]-r && py < box[3]+r)) continue;
-        if(placed.some(o=>!(box[2] + 3 < o[0] || box[0] - 3 > o[2] || box[3] + 1 < o[1] || box[1] - 1 > o[3]))) continue;
-        if(!fits(d, cx, cy, w, h)) continue;
-        done = {box, x:sx, y:sy, fs}; break;
+    for(let fs = top; fs >= 7 && !done; fs = fs > 8 ? Math.max(7, fs - 1.5) : 0){
+      for(const form of d.forms){
+        const w = form.em * fs + 2, h = form.lines.length * fs * 1.05 + 1;
+        for(const [sx, sy] of d.spots){
+          const cx = sx * k, cy = sy * k;
+          const box = [cx - w/2, cy - h/2, cx + w/2, cy + h/2];
+          if(pins.some(([px,py,r])=>px > box[0]-r && px < box[2]+r && py > box[1]-r && py < box[3]+r)) continue;
+          if(placed.some(o=>!(box[2] + 3 < o[0] || box[0] - 3 > o[2] || box[3] + 1 < o[1] || box[1] - 1 > o[3]))) continue;
+          if(!fits(d, cx, cy, w, h)) continue;
+          done = {box, x:sx, y:sy, fs, lines:form.lines}; break;
+        }
+        if(done) break;
       }
     }
     if(done){ placed.push(done.box); shown.set(d.name, done); }
   }
+  gLabels.selectAll("text").each(function(d){
+    const s = shown.get(d.name), want = s ? s.lines.join("\n") : "";
+    if(!s || this.__lines === want) return;
+    this.__lines = want;
+    d3.select(this).selectAll("tspan").data(s.lines).join("tspan").attr("x", 0)
+      .attr("dy", (t,i)=>i === 0 ? (s.lines.length > 1 ? "-0.52em" : 0) : "1.05em").text(t=>t);
+  });
   gLabels.selectAll("text")
     .attr("display", d=>shown.has(d.name) ? null : "none")
     .attr("font-size", d=>shown.has(d.name) ? shown.get(d.name).fs : null)
