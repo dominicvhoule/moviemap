@@ -6,7 +6,7 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 
 ## What it does
 
-- **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings). Every country is labelled, like a printed map. Opening a film suggests similar titles (TMDB recommendations).
+- **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings). It's a real street map (MapLibre with free OpenFreeMap tiles) drawn in the Swiss palette: place names, cities and streets appear as you zoom, and nearby pins merge into a count. Opening a film suggests similar titles (TMDB recommendations).
 - **Log a film**: search a title, pick the right match, and MovieMap finds the setting and poster. Move the pin if it's wrong.
 - **Letterboxd**: connect your Letterboxd username and every film on your Letterboxd Films page is added, with ratings. The profile stays linked until you press Change profile. Anyone you follow on Letterboxd who's on MovieMap is followed here too, and unfollowed when you unfollow them there. New films are picked up automatically: once a day on the server (if `daily-sync` is set up), and whenever the site is opened (at most every 6 hours, with a full re-read weekly).
 - **People**: search members by username, follow them, view their maps, find friends from your phone's contacts (Android Chrome), or share an invite link.
@@ -21,6 +21,7 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 | When Wikidata has no setting | The places linked in the title's Wikipedia plot, weighted by how often and how early they're mentioned (free, runs in the browser) |
 | Optional AI step | Claude reads the Wikipedia plot and TMDB description (`film-setting` function, needs an API key) |
 | Last resort | The film's country of origin (TMDB, then Wikidata), marked approximate |
+| Base map | [OpenFreeMap](https://openfreemap.org/) tiles (OpenStreetMap data) drawn with [MapLibre](https://maplibre.org/), restyled in black, white and grey |
 | Accounts, maps, follows | [Supabase](https://supabase.com/) (optional, see below) |
 
 Resolved settings are cached in a shared `film_settings` table so each film is only looked up once.
