@@ -92,7 +92,25 @@ a:hover{color:var(--red)}
 /* The list view: countries in order of how many titles are set there */
 .clist{position:absolute;inset:0;background:var(--paper);overflow:auto;z-index:2;padding:110px 24px 32px}
 .clist-in{max-width:1100px}
-.clist .k{font-size:12px;color:var(--muted);margin:0 0 8px}
+.clist .k{font-size:12px;color:var(--muted);margin:0}
+.clist-top{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:10px}
+#csearch{border:0;border-bottom:1px solid var(--rule);background:none;font:15px var(--f);color:var(--ink);padding:6px 0;width:min(260px,55%);outline:none}
+#csearch:focus{border-bottom-color:var(--red)}
+/* Stats */
+.bignums{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border-top:1px solid var(--rule)}
+.bignums div{padding:12px 12px 6px 0;display:flex;flex-direction:column;gap:4px;min-width:0}
+.bignums div+div{padding-left:12px;border-left:1px solid var(--line)}
+.bignums b{font-size:34px;font-weight:700;letter-spacing:-.03em;line-height:1;overflow-wrap:anywhere}
+.bignums span{font-size:12px;color:var(--muted)}
+.bars{list-style:none;margin:6px 0 0;padding:0}
+.bars li{display:grid;grid-template-columns:minmax(90px,180px) minmax(0,1fr) 56px;gap:12px;align-items:center;padding:5px 0;font-size:14px}
+.bars li[data-geo]{cursor:pointer}
+.bars li[data-geo]:hover .bl{color:var(--red)}
+.bars .bl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bars .bt{height:10px;background:var(--land)}
+.bars .bt i{display:block;height:100%;background:var(--ink)}
+.bars li:first-child .bt i{background:var(--red)}
+.bars .bv{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
 .clist section{border-top:1px solid var(--rule);padding:14px 0 18px}
 .chead{display:flex;align-items:baseline;gap:12px;width:100%;padding:0;border:0;background:none;cursor:pointer;text-align:left;color:var(--ink);font:inherit}
 .chead b{font-size:26px;font-weight:700;letter-spacing:-.02em;line-height:1.1}
@@ -114,6 +132,14 @@ a:hover{color:var(--red)}
 /* Numbered steps on the Letterboxd tab */
 .step{display:flex;align-items:center;gap:10px;margin:22px 0 4px;font-size:17px;font-weight:700}
 .step span{display:inline-grid;place-items:center;width:24px;height:24px;background:var(--red);color:#fff;font-size:13px}
+/* Three little steps for the Letterboxd export */
+.howto{list-style:none;counter-reset:h;margin:10px 0 0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));border-top:1px solid var(--rule)}
+.howto li{counter-increment:h;padding:12px 12px 0 0;display:flex;flex-direction:column;gap:4px;font-size:14px}
+.howto li::before{content:counter(h);font-size:12px;color:var(--muted)}
+.howto li+li{padding-left:12px;border-left:1px solid var(--line)}
+.howto a,.howto b{font-weight:700;color:var(--ink)}
+.howto span{font-size:12px;color:var(--muted)}
+.howto .btn{align-self:flex-start}
 /* A country's page */
 .back{border:0;background:none;padding:0;margin:0 0 14px;cursor:pointer;font:500 13px var(--f);color:var(--muted)}
 .back:hover{color:var(--ink)}
@@ -149,7 +175,11 @@ a:hover{color:var(--red)}
 .stars{color:var(--red);letter-spacing:.04em}
 
 .more{display:grid;gap:8px;border-top:1px solid var(--rule);padding-top:12px;margin-top:4px}
-.more ul{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px 10px}
+.more-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.more-h .hint{font-size:12px;margin:0}
+/* one row of suggestions, scrolled sideways */
+.more ul{list-style:none;margin:0;padding:0 0 6px;display:grid;grid-auto-flow:column;grid-auto-columns:calc((100% - 20px) / 3.3);gap:10px;overflow-x:auto;scroll-snap-type:x proximity;overscroll-behavior-x:contain}
+.more li{scroll-snap-align:start}
 .more button{display:grid;gap:3px;width:100%;background:none;border:0;padding:0;text-align:left;cursor:pointer}
 .more .th{display:block;width:100%;aspect-ratio:2/3;background:var(--land) center/cover no-repeat}
 .more .t{font-size:12px;font-weight:700;line-height:1.2;letter-spacing:-.01em;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
@@ -300,6 +330,10 @@ a:hover{color:var(--red)}
   .zoom button{width:32px;height:32px}
   .legend{display:none}
   .clist{padding:84px 12px 24px}
+  .bignums{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .bignums div:nth-child(3){padding-left:0;border-left:0}
+  .bignums b{font-size:26px}
+  .bars li{grid-template-columns:minmax(70px,110px) minmax(0,1fr) 44px;gap:8px}
   .chead b{font-size:21px}
   .viewtog button{height:32px;padding:0 10px}
   .rail{border-left:0;border-top:1px solid var(--rule);overflow:visible}

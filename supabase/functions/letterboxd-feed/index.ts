@@ -8,7 +8,6 @@
 //   {username, mode:"films", page:N, sort?}  one page of the member's watched films (about 72 per page);
 //                                      sort "date" = most recently added first, "rated-date" = most recently rated
 //   {mode:"film", slugs:[...]}         TMDB id + year for up to 20 film slugs (used when a list entry has no year)
-//   {username, mode:"following"}       usernames this person follows; complete:false if only part could be read
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -126,25 +125,6 @@ async function filmInfo(slugs: string[]) {
   return json({ films: out });
 }
 
-// ---------- people the member follows ----------
-// complete:true only when every page was read. Letterboxd often refuses pages after the first; then the
-// list is partial (complete:false), and the site adds friends from it but doesn't remove anyone.
-async function following(username: string) {
-  const names: string[] = [];
-  for (let page = 1; page <= 40; page++) {
-    const res = await get(`https://letterboxd.com/${username}/following/${page > 1 ? `page/${page}/` : ""}`);
-    if (res.status === 404 && page === 1) return json({ error: "not_found" }, 404);
-    if (!res.ok) return page > 1 ? json({ username, following: names, complete: false }) : json({ error: "upstream", status: res.status }, 502);
-    const html = await res.text();
-    const found = [...html.matchAll(/<a href="\/([A-Za-z0-9_]{1,30})\/" class="name"/g)].map((m) => m[1]);
-    if (page === 1 && !found.length && !/not following/i.test(html)) return json({ error: "layout" }, 502);
-    found.forEach((n) => { if (n.toLowerCase() !== username.toLowerCase() && !names.includes(n)) names.push(n); });
-    if (!found.length || !new RegExp(`/${username}/following/page/${page + 1}/`, "i").test(html)) return json({ username, following: names, complete: true });
-    await new Promise((r) => setTimeout(r, 150));
-  }
-  return json({ username, following: names, complete: false });
-}
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   if (req.method !== "POST") return json({ error: "method" }, 405);
@@ -161,7 +141,6 @@ Deno.serve(async (req) => {
     }
     const username = String(body.username ?? "").trim();
     if (!/^[A-Za-z0-9_]{1,30}$/.test(username)) return json({ error: "bad_username" }, 400);
-    if (mode === "following") return await following(username);
     if (mode === "films") {
       const page = Math.max(1, Math.min(200, Math.floor(Number(body.page) || 1)));
       const sort = ["date", "rated-date"].includes(String(body.sort)) ? String(body.sort) : "";

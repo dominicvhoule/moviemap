@@ -164,6 +164,7 @@ function initMap(){
   map.on("zoomend", ()=>renderPins());
   map.on("click", ev=>{
     if(!picking){
+      if(ev.originalEvent && ev.originalEvent.target.closest && ev.originalEvent.target.closest(".gpin")) return;   // that was a pin
       if(!$("#detail").hidden){ closeDetail(); return; }
       // Clicking a black country (one with a film) opens its page.
       const hit = map.getLayer("mm-visited") && map.queryRenderedFeatures(ev.point, {layers:["mm-visited"]})[0];
@@ -424,11 +425,24 @@ function openGroup(g){
   detail.querySelector(".x").onclick = closeDetail;
   detail.querySelectorAll(".multi button").forEach(b=>b.onclick = ()=>openFilm(g.films[+b.dataset.i]));
 }
-function openFilm(f, fly){
-  selected = f; detail.hidden = false;
-  const direct = f.poster ? MM.poster(f.poster) : null;
+// The film card appears in one go: poster, details and suggestions together (a moment later, rather
+// than piece by piece). Opening another film meanwhile cancels this one.
+let openToken = 0;
+async function openFilm(f, fly){
+  const token = ++openToken;
+  selected = f;
+  if(fly) flyTo(f);
+  renderPins(); markListSelection();
+  const ids = new Set(myFilms.map(x=>x.tmdb).filter(Boolean)), keys = myKeys();
+  const timeout = (p, ms) => Promise.race([p, new Promise(r=>setTimeout(()=>r(null), ms))]);
+  const [url, sim] = await Promise.all([
+    f.poster ? MM.poster(f.poster) : timeout(MM.posterFor(f).catch(()=>null), 5000),
+    timeout(MM.similarFrom(f, MM.isoFor(f.c), m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))).catch(()=>null), 8000)
+  ]);
+  if(token !== openToken || selected !== f) return;
   const mine = viewing.mine;
-  detail.innerHTML = `<div class="top">${posterSlot(f, direct)}
+  const list = sim && sim.list || [];
+  detail.innerHTML = `<div class="top">${posterSlot(f, url)}
     <div class="stub"><small>${esc(f.y)}${f.d ? " · " + esc(f.d) : ""}</small><h3>${esc(f.t)}</h3><button class="x" aria-label="Close">×</button></div></div>
     <div class="body">
       <div><div class="place">${esc(placeLine(f))}</div><div class="coord">${fmtCoord(f.lat, f.lon)}</div></div>
@@ -436,14 +450,13 @@ function openFilm(f, fly){
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${f.r ? `<span class="stars">${stars(f.r)}</span>` : ""}${f.rv ? '<span class="tag">Reviewed</span>' : ""}${isSeries(f) ? '<span class="tag tv">Series</span>' : ""}${f.ap ? '<span class="tag ap">Approx. setting</span>' : ""}${f.watched ? `<span class="tag" style="color:var(--muted)">Watched ${esc(f.watched)}</span>` : ""}</div>
       ${mine ? `<div class="cta"><button class="btn ghost small" id="d-move">Move pin</button><button class="btn ghost small" id="d-del">Remove</button></div>` : ""}
       ${f.tmdb ? `<a class="linkbtn" href="${MM.tmdbPage(f.tmdb)}" target="_blank" rel="noopener">${MM.isTv(f.tmdb) ? "Series" : "Film"} page on TMDB ↗</a>` : ""}
-      <div class="more" id="more" hidden></div>
+      ${list.length ? `<div class="more"><div class="more-h"><b class="sub" style="font-size:15px">${esc(sim.heading)}</b><span class="hint">Scroll for more →</span></div>
+        <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
+        <p class="hint" style="font-size:12px;margin:0">Tap one to add it to your map.</p></div>` : ""}
     </div>`;
-  showSimilar(f);
+  detail.hidden = false; detail.scrollTop = 0;
   detail.querySelector(".x").onclick = closeDetail;
-  if(!direct) MM.posterFor(f).then(url=>{
-    if(!url || selected !== f) return;
-    const slot = detail.querySelector(".poster"); if(slot) slot.outerHTML = posterSlot(f, url);
-  });
+  detail.querySelectorAll(".more button").forEach(b=>b.onclick = ()=>{ const m = list[+b.dataset.i]; pendingLog = {tmdb:m.tmdb, t:m.t, y:m.y}; location.hash = "#/log"; });
   if(mine){
     detail.querySelector("#d-move").onclick = ()=>{ toast("Tap the map where it takes place"); startPicking(async pt=>{
       const moved = pt.country && pt.country !== f.c;
@@ -458,25 +471,8 @@ function openFilm(f, fly){
       catch(e){ toast("Couldn't remove it. Try again."); }
     };
   }
-  if(fly) flyTo(f);
-  renderPins(); markListSelection();
 }
-// "More from Argentina": similar titles from the country this one is set in. Tap one to log it.
-async function showSimilar(f){
-  const iso = MM.isoFor(f.c);
-  const ids = new Set(myFilms.map(x=>x.tmdb).filter(Boolean)), keys = myKeys();
-  let res = null;
-  try{ res = await MM.similarFrom(f, iso, m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))); }catch(e){ return; }
-  const list = res && res.list || [];
-  const box = $("#more");
-  if(!box || selected !== f || !list.length) return;
-  box.hidden = false;
-  box.innerHTML = `<b class="sub" style="font-size:15px">${esc(res.heading)}</b>
-    <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
-    <p class="hint" style="font-size:12px">Tap one to add it to your map.</p>`;
-  box.querySelectorAll("button").forEach(b=>b.onclick = ()=>{ const m = list[+b.dataset.i]; pendingLog = {tmdb:m.tmdb, t:m.t, y:m.y}; location.hash = "#/log"; });
-}
-function closeDetail(){ detail.hidden = true; selected = null; renderPins(); markListSelection(); }
+function closeDetail(){ openToken++; detail.hidden = true; selected = null; renderPins(); markListSelection(); }
 
 /* ================= profile + logbook ================= */
 function setOwnerHeader(){
@@ -622,29 +618,87 @@ async function openCountry(geo){
   el.querySelectorAll("ul.cfilms").forEach((ul, k)=>{ const list = k === 0 && home.length ? home : away; ul.querySelectorAll("button").forEach(b=>b.onclick = ()=>openFilm(list[+b.dataset.i], true)); });
 }
 
-// The list view: the same map as a list, country by country.
-let listView = false;
+// Map, List and Stats: three ways to look at the same titles.
+let mapView = "map", listQuery = "";
 function setView(v){
-  listView = v === "list";
+  mapView = v;
   document.querySelectorAll(".viewtog button").forEach(b=>b.setAttribute("aria-pressed", String(b.dataset.v === v)));
-  $(".mapwrap").classList.toggle("listing", listView);
-  $("#clist").hidden = !listView;
-  if(listView) renderCountryList(); else if(map) map.resize();
+  $(".mapwrap").classList.toggle("listing", v !== "map");
+  $("#clist").hidden = v === "map";
+  if(v === "map"){ if(map) map.resize(); } else renderCountryList(true);
 }
 document.querySelectorAll(".viewtog button").forEach(b=>b.onclick = ()=>setView(b.dataset.v));
-function renderCountryList(){
-  if(!listView) return;
-  const el = $("#clist"), groups = countryGroups(filtered());
-  const total = groups.reduce((n,g)=>n + g.films.length, 0);
-  el.innerHTML = `<div class="clist-in">
-    <p class="k">${groups.length} countr${groups.length===1?"y":"ies"} · ${total} title${total===1?"":"s"}</p>
-    ${groups.length ? groups.map((g,i)=>`<section>
+function renderCountryList(fresh){
+  if(mapView === "list") return renderList2(fresh);
+  if(mapView === "stats") return renderStats();
+}
+
+// The list view: countries A to Z, with a search box.
+function renderList2(fresh){
+  const el = $("#clist");
+  if(fresh || !el.querySelector("#csearch")){
+    el.innerHTML = `<div class="clist-in"><div class="clist-top"><p class="k" id="ccount"></p>
+      <input id="csearch" type="search" placeholder="Find a country" aria-label="Find a country" autocomplete="off" value="${esc(listQuery)}"></div><div id="cgroups"></div></div>`;
+    $("#csearch").oninput = e=>{ listQuery = e.target.value; renderList2(false); };
+  }
+  const all = countryGroups(filtered()).sort((a,b)=>a.name.localeCompare(b.name));
+  const q = MM.norm(listQuery);
+  const groups = q ? all.filter(g=>MM.norm(g.name).includes(q)) : all;
+  const total = all.reduce((n,g)=>n + g.films.length, 0);
+  $("#ccount").textContent = `${all.length} countr${all.length===1?"y":"ies"} · ${total} title${total===1?"":"s"}`;
+  const box = $("#cgroups");
+  box.innerHTML = groups.length ? groups.map((g,i)=>`<section>
       <button type="button" class="chead" data-g="${i}"><b>${esc(g.name)}</b><span>${g.films.length}</span></button>
       <ul class="cposters">${g.films.map((f,j)=>`<li><button type="button" data-g="${i}" data-f="${j}" title="${esc(f.t)}${f.y ? " (" + esc(f.y) + ")" : ""}"><span class="th"${f.poster ? ` style="background-image:url('${MM.poster(f.poster,"w154")}')"` : ""}>${f.poster ? "" : esc(f.t)}</span><span class="t">${esc(f.t)}</span></button></li>`).join("")}</ul>
-    </section>`).join("") : `<p class="hint">No titles yet.</p>`}
+    </section>`).join("") : `<p class="hint">${all.length ? "No country matches that." : "No titles yet."}</p>`;
+  box.querySelectorAll(".chead").forEach(b=>b.onclick = ()=>openCountry(groups[+b.dataset.g].geo));
+  box.querySelectorAll(".cposters button").forEach(b=>b.onclick = ()=>openFilm(groups[+b.dataset.g].films[+b.dataset.f], false));
+}
+
+// The stats view.
+let statsToken = 0;
+async function renderStats(){
+  const el = $("#clist"), token = ++statsToken;
+  const films = filtered(), n = films.length;
+  if(!n){ el.innerHTML = `<div class="clist-in"><p class="hint">No titles yet.</p></div>`; return; }
+  const pct = x => Math.round(x * 100 / n);
+  const groups = countryGroups(films);
+  const conts = new Map(); films.forEach(f=>{ const c = contOf(f); if(c) conts.set(c, (conts.get(c) || 0) + 1); });
+  const decades = new Map(); films.forEach(f=>{ const y = +f.y; if(y) { const d = Math.floor(y / 10) * 10; decades.set(d, (decades.get(d) || 0) + 1); } });
+  const places = new Map(); films.forEach(f=>{ if(f.p && f.p !== f.c && !f.ap){ places.set(f.p, (places.get(f.p) || 0) + 1); } });
+  const topPlace = [...places.entries()].sort((a,b)=>b[1] - a[1])[0];
+  const rated = groups.map(g=>({name:g.name, geo:g.geo, rs:g.films.map(f=>+f.r).filter(Boolean)})).filter(g=>g.rs.length >= 2)
+    .map(g=>({...g, avg:g.rs.reduce((a,b)=>a + b, 0) / g.rs.length})).sort((a,b)=>b.avg - a.avg).slice(0, 5);
+  const bars = (rows, max) => `<ul class="bars">${rows.map(r=>`<li${r.geo ? ` data-geo="${esc(r.geo)}"` : ""}><span class="bl">${esc(r.label)}</span><span class="bt"><i style="width:${Math.max(2, r.v * 100 / max)}%"></i></span><span class="bv">${esc(r.text)}</span></li>`).join("")}</ul>`;
+  const top = groups.slice(0, 10), rest = groups.slice(10).reduce((s,g)=>s + g.films.length, 0);
+  const ctryRows = top.map(g=>({label:g.name, geo:g.geo, v:g.films.length, text:pct(g.films.length) + "%"}));
+  if(rest) ctryRows.push({label:`${groups.length - 10} other countries`, v:rest, text:pct(rest) + "%"});
+  const contRows = [...conts.entries()].sort((a,b)=>b[1] - a[1]).map(([c,v])=>({label:c, v, text:pct(v) + "%"}));
+  const decRows = [...decades.entries()].sort((a,b)=>a[0] - b[0]).map(([d,v])=>({label:d + "s", v, text:String(v)}));
+  el.innerHTML = `<div class="clist-in stats">
+    <div class="bignums">
+      <div><b>${groups.length}</b><span>countries, ${Math.round(groups.length * 100 / 195)}% of the world</span></div>
+      <div><b>${conts.size}</b><span>continent${conts.size===1?"":"s"}</span></div>
+      <div><b id="st-home">–</b><span>made in the country they're set in</span></div>
+      <div><b>${topPlace ? esc(topPlace[0]) : "–"}</b><span>${topPlace ? `most-visited place, ${topPlace[1]} title${topPlace[1]===1?"":"s"}` : "most-visited place"}</span></div>
+    </div>
+    <h3 class="csec">Where your titles are set <span>% of ${n}</span></h3>${bars(ctryRows, top[0].films.length)}
+    ${contRows.length ? `<h3 class="csec">By continent</h3>${bars(contRows, contRows[0].v)}` : ""}
+    ${decRows.length ? `<h3 class="csec">By decade of release</h3>${bars(decRows, Math.max(...decRows.map(r=>r.v)))}` : ""}
+    ${rated.length ? `<h3 class="csec">Best-rated countries <span>2+ rated titles</span></h3>${bars(rated.map(r=>({label:r.name, geo:r.geo, v:r.avg, text:"★ " + r.avg.toFixed(1)})), 5)}` : ""}
+    <h3 class="csec">Where they were made <span id="st-madeh"></span></h3><div id="st-made"><p class="hint busy">Checking where each title was made…</p></div>
   </div>`;
-  el.querySelectorAll(".chead").forEach(b=>b.onclick = ()=>openCountry(groups[+b.dataset.g].geo));
-  el.querySelectorAll(".cposters button").forEach(b=>b.onclick = ()=>openFilm(groups[+b.dataset.g].films[+b.dataset.f], false));
+  el.querySelectorAll(".bars li[data-geo]").forEach(li=>{ li.tabIndex = 0; li.onclick = ()=>openCountry(li.dataset.geo); li.onkeydown = e=>{ if(e.key === "Enter") openCountry(li.dataset.geo); }; });
+  // Made at home vs. abroad needs each title's origin (cached after the first look).
+  await originsOf(films);
+  if(token !== statsToken || mapView !== "stats") return;
+  const known = films.filter(f=>f.made && f.made.length);
+  const home = known.filter(f=>{ const iso = MM.isoFor(geoOf(f)) || MM.isoFor(f.c); return iso && f.made.includes(iso); });
+  $("#st-home").textContent = known.length ? Math.round(home.length * 100 / known.length) + "%" : "–";
+  const makers = new Map(); known.forEach(f=>{ const c = f.made[0]; makers.set(c, (makers.get(c) || 0) + 1); });
+  const mk = [...makers.entries()].sort((a,b)=>b[1] - a[1]).slice(0, 8);
+  $("#st-madeh").textContent = `main country of origin, % of ${known.length}`;
+  $("#st-made").innerHTML = mk.length ? bars(mk.map(([c,v])=>({label:regionName(c), v, text:Math.round(v * 100 / known.length) + "%"})), mk[0][1]) : `<p class="hint">Not on record.</p>`;
 }
 
 /* ================= rail views ================= */
@@ -898,7 +952,6 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
     // (The films list shows current ratings and wins; the diary feed fills in films beyond the first page,
     // newest entry last so it wins over older rewatches.)
     if(list.length || feed.length) changes = await reconcileLetterboxd([...feed.filter(e=>e.slug && e.r != null).reverse(), ...list], full && list.complete);
-    linkLetterboxdFriends(quiet).catch(()=>{});
     if((added || changes.rated || changes.removed) && viewing.mine){ viewing.films = myFilms; renderAll(); if(added || changes.removed) fitPins(true); }
     if(changes.removed || changes.rated) toast([changes.removed ? `Removed ${changes.removed} film${changes.removed===1?"":"s"} you took off Letterboxd` : "", changes.rated ? `updated ${changes.rated} rating${changes.rated===1?"":"s"}` : ""].filter(Boolean).join(", ").replace(/^u/, "U"));
     if(changes.held) toast(`${changes.held} films are missing from your Letterboxd list, which looks like a reading problem, so none were removed`);
@@ -949,58 +1002,6 @@ async function reconcileLetterboxd(list, complete){
   }
   if(out.removed && viewing.mine) viewing.films = myFilms;
   return out;
-}
-
-// Friends mirror Letterboxd: anyone you follow there who has a MovieMap account (with that Letterboxd
-// profile linked) is followed here, and unfollowed here when you unfollow them there. Follows you make
-// by hand on MovieMap are never touched, and unfollowing a Letterboxd friend here sticks until you
-// unfollow and re-follow them on Letterboxd.
-const lbFriendsKey = () => "mm-lb-friends:" + (me ? me.id : "");
-async function linkLetterboxdFriends(quiet){
-  if(!cloud() || !me.letterboxd) return;
-  let d;
-  try{ d = await lbInvoke({username:me.letterboxd, mode:"following"}); }catch(e){ return; }
-  if(!d || !Array.isArray(d.following)) return;   // older function: change nothing
-  // Letterboxd may only let us read the first page of who you follow: then we add friends from it,
-  // but only remove anyone when we've seen the whole list.
-  const complete = d.complete !== false;
-  const names = d.following, now = new Set(names.map(n=>n.toLowerCase()));
-  const seen = new Set([...(Array.isArray(me.lb_seen) ? me.lb_seen : []), ...MM.lsGet(lbFriendsKey(), [])].map(n=>String(n).toLowerCase()));
-  const lookup = async list => {
-    const out = [];
-    for(let i=0; i<list.length; i+=40){
-      const part = list.slice(i, i+40), want = new Set(part.map(n=>n.toLowerCase()));
-      const {data} = await sb.from("profiles").select("id,username,letterboxd").or(part.map(n=>`letterboxd.ilike.${n}`).join(","));
-      (data || []).forEach(p=>{ if(p.id !== me.id && p.letterboxd && want.has(p.letterboxd.toLowerCase())) out.push(p); });
-    }
-    return out;
-  };
-  // Someone you already followed by hand stays a hand-made follow, so Letterboxd never removes them.
-  const {data:mine} = await sb.from("follows").select("followee").eq("follower", me.id);
-  const already = new Set((mine || []).map(r=>r.followee));
-  const toAdd = (await lookup(names.filter(n=>!seen.has(n.toLowerCase())))).filter(p=>!already.has(p.id));
-  const gone = complete ? [...seen].filter(n=>!now.has(n)) : [];
-  const toRemove = gone.length ? await lookup(gone) : [];
-  if(toAdd.length){
-    const {error} = await sb.from("follows").upsert(toAdd.map(p=>({follower:me.id, followee:p.id})), {onConflict:"follower,followee", ignoreDuplicates:true});
-    if(error) return;
-  }
-  if(toRemove.length){
-    const {error} = await sb.from("follows").delete().eq("follower", me.id).in("followee", toRemove.map(p=>p.id));
-    if(error) return;
-  }
-  if(toAdd.length || gone.length){
-    const next = [...[...seen].filter(n=>!complete || now.has(n)), ...toAdd.map(p=>p.letterboxd.toLowerCase())];
-    MM.lsSet(lbFriendsKey(), next);
-    const {error} = await sb.from("profiles").update({lb_seen:next}).eq("id", me.id);
-    if(!error) me.lb_seen = next;
-  }
-  const list = p => p.slice(0, 3).map(x=>"@" + x.username).join(", ") + (p.length > 3 ? ` and ${p.length - 3} more` : "");
-  if(toAdd.length) toast(`Now following ${list(toAdd)} from your Letterboxd friends`);
-  if(toRemove.length) toast(`Unfollowed ${list(toRemove)}, as you did on Letterboxd`);
-  const onMM = (await lookup(names)).length;
-  MM.lsSet(lbFriendsKey() + ":report", {checked:Date.now(), following:names.length, onMovieMap:onMM});
-  if(location.hash === "#/import" && !lbEditing) renderImport();
 }
 
 // Re-check pins that were only country guesses (or have a hand-checked setting now). Pins you moved yourself are left alone.
@@ -1134,9 +1135,8 @@ function renderImport(){
   const onMap = new Set(myFilms.map(f=>f.tmdb).filter(Boolean)), mk = myKeys();
   const missing = rep ? rep.missed.filter(m=>!(m.tmdb && onMap.has(m.tmdb)) && !mk.has(MM.filmKey(m))) : [];
   el.innerHTML = `<h2 class="h">Letterboxd</h2>
-    <p class="hint">Two steps, both optional. Do both and your map takes care of itself: the import fills in your past, and the link adds everything new from now on.</p>
     <h3 class="step"><span>1</span>Link your username</h3>
-    <p class="hint">Brings in your most recent films (your last 50 diary entries and your 72 newest films), then keeps your map up to date by itself: new films, rating changes on recent films, and friends. Anyone you follow on Letterboxd who has a MovieMap account with their Letterboxd linked is followed here too. It reads your public profile, so there's no password.</p>
+    <p class="hint">Adds your recent films, then new ones automatically. No password needed.</p>
     ${cloud() ? `
     ${lb && !lbEditing ? `
     <div class="linked">
@@ -1144,7 +1144,7 @@ function renderImport(){
       <div class="cta"><button class="btn ghost" type="button" id="lbchange">Change profile</button></div>
     </div>
     <p class="hint" id="lbs">New films are added automatically.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}</p>
-    ${(fr=>fr ? `<p class="hint">Friends: you follow ${fr.following} ${fr.following===1?"person":"people"} on Letterboxd${fr.onMovieMap ? `; ${fr.onMovieMap} ${fr.onMovieMap===1?"is":"are"} on MovieMap (see <a href="#/explore">People</a>)` : ". None of them are on MovieMap yet"}. Following or unfollowing someone on Letterboxd does the same here.</p>` : "")(MM.lsGet(lbFriendsKey() + ":report", null))}`
+`
     : `
     <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${lbEditing ? "" : esc(lb||"")}"><button class="btn" type="submit">Connect</button>${lbEditing ? `<button class="btn ghost" type="button" id="lbcancel">Cancel</button>` : ""}</form>
     <p class="hint" id="lbs">${lbEditing ? `Currently linked to letterboxd.com/${esc(lb)}. Films already on your map stay there.` : "Your Letterboxd profile needs to be public."}</p>`}
@@ -1153,15 +1153,16 @@ function renderImport(){
       ${missing.length ? `<p class="hint">We couldn't work out where ${missing.length===1 ? "this one takes" : "these take"} place. Tap Place it to pin ${missing.length===1 ? "it" : "each one"} yourself.</p>
       <ul class="results">${missing.map((m,i)=>`<li><button data-i="${i}"><span class="th" ${m.poster ? `style="background-image:url('${MM.poster(m.poster,"w92")}')"` : ""}></span><span style="min-width:0"><b>${esc(m.t)} <span class="m">${esc(m.y)}</span></b><span class="m" style="color:var(--rust)">Place it →</span></span></button></li>`).join("")}</ul>` : ""}
     </div>` : ""}
-    <p class="hint">Your profile has to be public. Anything that doesn't come through can be added with <a href="#/log">Log a film</a>.</p>`
+`
     : `<p class="notice">${sb ? '<a href="#/account">Sign in</a> to link your Letterboxd username.' : "Accounts aren't switched on for this site yet."}</p>`}
-    <h3 class="step"><span>2</span>Import your history, once</h3>
-    <div class="box" id="lbimport">
-      <p class="hint" style="margin-top:0">Letterboxd only lets MovieMap see your most recent films, so bring in everything before that with your Letterboxd export: download it from <a href="https://letterboxd.com/settings/data/" target="_blank" rel="noopener">Settings → Import &amp; Export → Export your data</a>, then choose the zip here. Ratings and watch dates come too, and films already on your map are skipped.</p>
-      <p class="hint">After that there's nothing more to do: the link keeps adding new films. The link can't see far back, though, so if you change an old rating or delete an old film on Letterboxd, import a fresh export to bring that across.</p>
-      <div class="cta"><label class="btn" for="lbzip" tabindex="0">Choose export file</label><input type="file" id="lbzip" accept=".zip,.csv" multiple hidden></div>
-      <p class="hint" id="lbzs" aria-live="polite"></p>
-    </div>`;
+    <h3 class="step"><span>2</span>Add your older films</h3>
+    <p class="hint">Do this once to bring in everything you've ever watched.</p>
+    <ol class="howto">
+      <li><a href="https://letterboxd.com/settings/data/" target="_blank" rel="noopener">Export your data ↗</a><span>on Letterboxd</span></li>
+      <li><b>Save the zip file</b><span>the one Letterboxd gives you</span></li>
+      <li><label class="btn" for="lbzip" tabindex="0">Choose the zip</label><input type="file" id="lbzip" accept=".zip,.csv" multiple hidden></li>
+    </ol>
+    <p class="hint" id="lbzs" aria-live="polite"></p>`;
   el.querySelectorAll(".results button").forEach(b=>b.onclick = ()=>{ pendingLog = missing[+b.dataset.i]; location.hash = "#/log"; });
   const zip = $("#lbzip"), zl = el.querySelector('label[for="lbzip"]');
   if(zl) zl.onkeydown = e=>{ if(e.key === "Enter" || e.key === " "){ e.preventDefault(); zip.click(); } };

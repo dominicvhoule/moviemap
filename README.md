@@ -8,8 +8,8 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 
 - **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings). It's a real street map (MapLibre with free OpenFreeMap tiles) drawn in the Swiss palette: place names, cities and streets appear as you zoom, and nearby pins merge into a count. Opening a film suggests similar titles (TMDB recommendations).
 - **Log a film**: search a title, pick the right match, and MovieMap finds the setting and poster. Move the pin if it's wrong.
-- **Letterboxd**: link your Letterboxd username and your most recent films come in (your last 50 diary entries and your 72 newest films; Letterboxd blocks reading further). For your whole history, import the Letterboxd data export (zip or CSV) on the Letterboxd tab. The profile stays linked until you press Change profile. Anyone you follow on Letterboxd who's on MovieMap is followed here too, and unfollowed when you unfollow them there. New films are picked up automatically: once a day on the server (if `daily-sync` is set up), and whenever the site is opened (at most every 6 hours, with a full re-read weekly).
-- **Countries**: switch the map to List to see every country with its titles. Opening a country (from the list or by clicking it on the map) splits its titles into ones made there and ones set there but made elsewhere (TMDB origin and production countries).
+- **Letterboxd**: link your Letterboxd username and your most recent films come in (your last 50 diary entries and your 72 newest films; Letterboxd blocks reading further). For your whole history, import the Letterboxd data export (zip or CSV) on the Letterboxd tab. The profile stays linked until you press Change profile. New films are picked up automatically: once a day on the server (if `daily-sync` is set up), and whenever the site is opened (at most every 6 hours, with a full re-read weekly).
+- **Map, List, Stats**: switch the map to List (countries A to Z, with search) or Stats (share of titles by country, continent and decade, best-rated countries, and how many were made where they're set). Opening a country (from the list or by clicking it on the map) splits its titles into ones made there and ones set there but made elsewhere (TMDB origin and production countries).
 - **People**: search members by username, follow them, view their maps, find friends from your phone's contacts (Android Chrome), or share an invite link.
 - **Phone layout**: wide map on top, posters in a swipeable strip below.
 
@@ -40,8 +40,6 @@ Without this step the site still works, but films save only in each visitor's br
    - **Edge Functions → Secrets**: add `CRON_SECRET` with any long random string (for example from a password generator).
    - **Edge Functions → Deploy a new function → Via editor**: name it `daily-sync`, paste `supabase/functions/daily-sync/index.ts`, turn **Verify JWT off**, and press **Deploy**.
    - **SQL Editor**: paste `supabase/migrations/003_daily_sync.sql`, replace `PASTE-THE-SAME-CRON-SECRET-HERE` with the same string, and press **Run**. It checks everyone at 09:05 UTC, with a second pass at 09:20.
-
-7. **Letterboxd friends**: run `supabase/migrations/005_letterboxd_friends.sql`, then redeploy `letterboxd-feed` and `daily-sync` with the latest code. Anyone a member follows on Letterboxd who has a MovieMap account is then followed on MovieMap too, and unfollowed when they're unfollowed on Letterboxd. Follows made by hand on MovieMap are never touched.
 
 8. **Letterboxd ratings and removals**: run `supabase/migrations/006_letterboxd_links.sql`, then redeploy `letterboxd-feed` and `daily-sync`. Each pin then remembers which Letterboxd film it came from, so rating changes are copied over and films removed from Letterboxd come off the map.
 

@@ -354,7 +354,7 @@ MM.similarFrom = async function(f, iso, exclude){
     pool = det ? await tmdbRelated(det).catch(()=>[]) : [];
     if(pool.length) lsSet(key, pool.slice(0, 30));
   }
-  const pick = list => list.filter(m=>m.tmdb !== self && !(exclude && exclude(m))).slice(0, 6);
+  const pick = list => list.filter(m=>m.tmdb !== self && !(exclude && exclude(m))).slice(0, 12);
   let list = pick(pool), heading = "More like " + (det ? det.t : f.t);
   if(list.length < 3 && iso){
     const favs = pick(await countryFavourites(f, det, iso).catch(()=>[]));

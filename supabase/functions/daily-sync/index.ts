@@ -1,8 +1,7 @@
 // MovieMap: keep every linked Letterboxd map up to date, even when nobody opens the site.
 // Called by a schedule (see supabase/migrations/003_daily_sync.sql). Each run works through the
 // members whose maps are oldest, then the starter map (supabase/migrations/007_starter_map.sql):
-// adds new Letterboxd films with a setting, copies rating changes, removes films taken off Letterboxd,
-// and mirrors friends. It stops before the function's time limit; a map that isn't finished stays due,
+// adds new Letterboxd films with a setting, copies rating changes, and removes films taken off Letterboxd. It stops before the function's time limit; a map that isn't finished stays due,
 // so the next run carries on. POST {"starter":"<username>"} syncs just that starter map.
 //
 // Secrets (Edge Functions → Secrets):
@@ -218,56 +217,6 @@ async function settingFor(d: NonNullable<Awaited<ReturnType<typeof details>>>): 
   return s ?? await fromCountry(d.iso).catch(() => null);
 }
 
-// ---------- friends: follow anyone this member follows on Letterboxd who is on MovieMap ----------
-// Who a member follows. complete is false when Letterboxd refused a later page: then friends are only
-// added from what was read, never removed. null if even the first page couldn't be read.
-async function letterboxdFollowing(username: string): Promise<{ names: string[]; complete: boolean } | null> {
-  const names: string[] = [];
-  for (let page = 1; page <= 40; page++) {
-    const r = await fetch(`https://letterboxd.com/${username}/following/${page > 1 ? `page/${page}/` : ""}`, { headers: UA });
-    if (!r.ok) return page > 1 ? { names, complete: false } : null;
-    const html = await r.text();
-    const found = [...html.matchAll(/<a href="\/([A-Za-z0-9_]{1,30})\/" class="name"/g)].map((m) => m[1]);
-    if (page === 1 && !found.length && !/not following/i.test(html)) return null;   // page layout changed
-    found.forEach((n) => { if (n.toLowerCase() !== username.toLowerCase() && !names.includes(n)) names.push(n); });
-    if (!found.length || !new RegExp(`/${username}/following/page/${page + 1}/`, "i").test(html)) return { names, complete: true };
-    await sleep(300);
-  }
-  return { names, complete: false };
-}
-// Mirror Letterboxd: follow friends who are on MovieMap, and unfollow ones followed that way who were
-// unfollowed on Letterboxd. Follows made by hand on MovieMap are never touched.
-async function syncFriends(p: { id: string; letterboxd: string; lb_seen?: string[] | null }) {
-  const read = await letterboxdFollowing(p.letterboxd);
-  if (!read) return { added: 0, removed: 0 };
-  const { names, complete } = read;
-  const now = new Set(names.map((n) => n.toLowerCase()));
-  const seen = new Set((p.lb_seen ?? []).map((n) => n.toLowerCase()));
-  const lookup = async (list: string[]) => {
-    const out: { id: string; letterboxd: string }[] = [];
-    for (let i = 0; i < list.length; i += 40) {
-      const part = list.slice(i, i + 40), want = new Set(part.map((n) => n.toLowerCase()));
-      const rows = await db(`profiles?select=id,letterboxd&or=(${part.map((n) => `letterboxd.ilike.${n}`).join(",")})`) ?? [];
-      rows.forEach((r: { id: string; letterboxd: string }) => { if (r.id !== p.id && r.letterboxd && want.has(r.letterboxd.toLowerCase())) out.push(r); });
-    }
-    return out;
-  };
-  // Someone already followed by hand stays a hand-made follow, so Letterboxd never removes them.
-  const mine: { followee: string }[] = await db(`follows?follower=eq.${p.id}&select=followee`) ?? [];
-  const already = new Set(mine.map((r) => r.followee));
-  const toAdd = (await lookup(names.filter((n) => !seen.has(n.toLowerCase())))).filter((f) => !already.has(f.id));
-  const gone = complete ? [...seen].filter((n) => !now.has(n)) : [];
-  const toRemove = gone.length ? await lookup(gone) : [];
-  if (toAdd.length) await db("follows?on_conflict=follower,followee", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates" },
-    body: JSON.stringify(toAdd.map((f) => ({ follower: p.id, followee: f.id }))) });
-  if (toRemove.length) await db(`follows?follower=eq.${p.id}&followee=in.(${toRemove.map((f) => f.id).join(",")})`, { method: "DELETE" });
-  if (toAdd.length || gone.length) {
-    const next = [...[...seen].filter((n) => !complete || now.has(n)), ...toAdd.map((f) => f.letterboxd.toLowerCase())];
-    await db(`profiles?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ lb_seen: next }) }).catch(() => {});
-  }
-  return { added: toAdd.length, removed: toRemove.length };
-}
-
 // ---------- one member ----------
 const slugify = (t: string) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/&/g, "").replace(/['’.]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 type Log = { id: number; title: string; year: number | null; tmdb_id: number | null; rating: number | null; lb_slug: string | null };
@@ -362,14 +311,12 @@ Deno.serve(async (req) => {
 
   if (!body.starter) {
     const q = (cols: string) => db(`profiles?letterboxd=not.is.null&or=(last_synced.is.null,last_synced.lt.${due})&select=${cols}&order=last_synced.asc.nullsfirst&limit=50`);
-    // lb_seen arrives with migration 005; work without it until then.
-    const members: { id: string; letterboxd: string; lb_seen?: string[] }[] = await q("id,letterboxd,lb_seen").catch(() => q("id,letterboxd")) ?? [];
+    const members: { id: string; letterboxd: string }[] = await q("id,letterboxd") ?? [];
     for (const m of members) {
       if (Date.now() > deadline) break;
       let done = true;
       try { const r = await syncMap(memberTarget(m.id), m.letterboxd, deadline); report[m.letterboxd] = r; done = r.finished || r.left === 0; }
       catch (e) { report[m.letterboxd] = "error: " + String((e as Error).message).slice(0, 120); }
-      try { const n = await syncFriends(m); if (n.added || n.removed) report[m.letterboxd + " friends"] = `+${n.added} -${n.removed}`; } catch { /* friends are a bonus */ }
       // An unfinished map stays due, so the next run picks it up where this one stopped.
       if (done) await db(`profiles?id=eq.${m.id}`, { method: "PATCH", body: JSON.stringify({ last_synced: new Date().toISOString() }) }).catch(() => {});
       await sleep(500);   // be gentle with Letterboxd
