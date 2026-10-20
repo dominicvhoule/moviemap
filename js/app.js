@@ -109,7 +109,10 @@ async function reloadMine(){ try{ myFilms = await Store.load(); }catch(e){ myFil
 const myKeys = () => new Set(myFilms.map(MM.filmKey));
 
 // The printable poster is built (js/poster.js) but switched off until it's ready to sell.
-const POSTERS = false;
+const POSTERS = true;
+// Printed posters are sold through a print-on-demand partner. Until checkout is set up, "Order a print"
+// collects interest instead of taking payment.
+const ORDER_URL = "";
 
 /* ================= map ================= */
 // A real street map (MapLibre + OpenFreeMap tiles, free and keyless) that behaves like Google Maps
@@ -430,7 +433,7 @@ function openGroup(g){
 let openToken = 0;
 async function openFilm(f, fly){
   const token = ++openToken;
-  selected = f;
+  selected = f; preview = null;
   if(fly) flyTo(f);
   renderPins(); markListSelection();
   const ids = new Set(myFilms.map(x=>x.tmdb).filter(Boolean)), keys = myKeys();
@@ -452,11 +455,11 @@ async function openFilm(f, fly){
       ${f.tmdb ? `<a class="linkbtn" href="${MM.tmdbPage(f.tmdb)}" target="_blank" rel="noopener">${MM.isTv(f.tmdb) ? "Series" : "Film"} page on TMDB ↗</a>` : ""}
       ${list.length ? `<div class="more"><div class="more-h"><b class="sub" style="font-size:15px">${esc(sim.heading)}</b><span class="hint">Scroll for more →</span></div>
         <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
-        <p class="hint" style="font-size:12px;margin:0">Tap one to add it to your map.</p></div>` : ""}
+        <p class="hint" style="font-size:12px;margin:0">Tap one to see where it's set, watch the trailer or find where to stream it.</p></div>` : ""}
     </div>`;
   detail.hidden = false; detail.scrollTop = 0;
   detail.querySelector(".x").onclick = closeDetail;
-  detail.querySelectorAll(".more button").forEach(b=>b.onclick = ()=>{ const m = list[+b.dataset.i]; pendingLog = {tmdb:m.tmdb, t:m.t, y:m.y}; location.hash = "#/log"; });
+  detail.querySelectorAll(".more button").forEach(b=>b.onclick = ()=>openPreview(list[+b.dataset.i], f));
   if(mine){
     detail.querySelector("#d-move").onclick = ()=>{ toast("Tap the map where it takes place"); startPicking(async pt=>{
       const moved = pt.country && pt.country !== f.c;
@@ -472,7 +475,57 @@ async function openFilm(f, fly){
     };
   }
 }
-function closeDetail(){ openToken++; detail.hidden = true; selected = null; renderPins(); markListSelection(); }
+/* ---------- preview of a suggested title (not on the map yet) ---------- */
+// Flies to where it's set and shows what it's about, its trailer and where to watch it.
+// "Where to watch" comes from TMDB (data by JustWatch) for the visitor's country.
+const watchRegion = () => { const m = (navigator.language || "en-US").match(/-([A-Z]{2})/i); return m ? m[1].toUpperCase() : "US"; };
+// Every "watch" link goes through here, so affiliate links can be added in one place later.
+function watchLink(provider, film, providersPage){ return providersPage || MM.tmdbPage(film.tmdb); }
+async function openPreview(m, from){
+  const token = ++openToken;
+  const tv = MM.isTv(m.tmdb);
+  const timeout = (p, ms) => Promise.race([p, new Promise(r=>setTimeout(()=>r(null), ms))]);
+  const det = await MM.filmDetails(m.tmdb).catch(()=>null);
+  const [settings, extra] = await Promise.all([
+    det ? timeout(MM.resolveSettings([det], null, [det.t]).catch(()=>null), 9000) : null,
+    MM.tmdb((tv ? "/tv/" : "/movie/") + Math.abs(m.tmdb), {append_to_response:"videos,watch/providers"}).catch(()=>null)
+  ]);
+  if(token !== openToken) return;
+  const s = settings && settings[0];
+  const region = watchRegion();
+  const wp = extra && extra["watch/providers"] && extra["watch/providers"].results && extra["watch/providers"].results[region];
+  const vids = (extra && extra.videos && extra.videos.results || []).filter(v=>v.site === "YouTube");
+  const trailer = vids.find(v=>v.type === "Trailer" && v.official) || vids.find(v=>v.type === "Trailer") || vids.find(v=>v.type === "Teaser");
+  const runtime = extra && (extra.runtime || (extra.episode_run_time || [])[0]);
+  const genres = (extra && extra.genres || []).map(g=>g.name).slice(0, 3).join(", ");
+  const groups = wp ? [["Stream", wp.flatrate], ["Rent", wp.rent], ["Buy", wp.buy]].filter(([,l])=>l && l.length) : [];
+  const title = det ? det.t : m.t, year = det ? det.y : m.y;
+  if(s && isFinite(s.lat)){ preview = {lat:s.lat, lon:s.lon}; selected = null; renderPins(); flyTo({lat:s.lat, lon:s.lon}); }
+  detail.innerHTML = `<div class="top">${posterSlot({t:title}, MM.poster(m.poster || (det && det.poster)))}
+    <div class="stub" style="background:var(--ink)"><small>${esc(year)}${det && det.d ? " · " + esc(det.d) : ""}</small><h3>${esc(title)}</h3><button class="x" aria-label="Close">×</button></div></div>
+    <div class="body">
+      ${from ? `<button type="button" class="back" id="pv-back" style="margin:0">← Back to ${esc(from.t)}</button>` : ""}
+      ${s ? `<div><div class="place">${esc(placeLine({p:s.p, c:s.c}))}</div>${s.n ? `<p class="note" style="margin:6px 0 0">${esc(s.n)}</p>` : ""}</div>` : `<p class="hint" style="margin:0">We couldn't find where this one is set.</p>`}
+      ${det && det.ov ? `<p class="ov">${esc(det.ov)}</p>` : ""}
+      ${genres || runtime ? `<p class="hint" style="margin:0">${esc([genres, runtime ? runtime + " min" : ""].filter(Boolean).join(" · "))}</p>` : ""}
+      <div class="cta">${trailer ? `<button class="btn" type="button" id="pv-trailer">▶ Watch trailer</button>` : ""}<button class="btn ghost" type="button" id="pv-add">Add to my map</button></div>
+      <div id="pv-video"></div>
+      <div class="watch"><b class="sub" style="font-size:15px">Where to watch</b>
+        ${groups.length ? groups.map(([label, list])=>`<div class="wrow"><span class="wl">${label}</span><ul>${list.slice(0, 8).map(p=>`<li><a href="${esc(watchLink(p, {tmdb:m.tmdb, t:title}, wp.link))}" target="_blank" rel="noopener sponsored" title="${esc(p.provider_name)}"><img src="${MM.TMDB_IMG}w92${p.logo_path}" alt="${esc(p.provider_name)}" loading="lazy"></a></li>`).join("")}</ul></div>`).join("")
+          : `<p class="hint" style="margin:4px 0 0">Not streaming, for rent or for sale in your country right now.</p>`}
+        <p class="hint" style="font-size:11px;margin:6px 0 0">Streaming information by JustWatch.</p></div>
+    </div>`;
+  detail.hidden = false; detail.scrollTop = 0;
+  detail.querySelector(".x").onclick = closeDetail;
+  const back = $("#pv-back"); if(back) back.onclick = ()=>{ preview = null; openFilm(from, true); };
+  $("#pv-add").onclick = ()=>{ preview = null; pendingLog = {tmdb:m.tmdb, t:title, y:year}; location.hash = "#/log"; };
+  const tb = $("#pv-trailer");
+  if(tb) tb.onclick = ()=>{
+    $("#pv-video").innerHTML = `<div class="video"><iframe src="https://www.youtube-nocookie.com/embed/${encodeURIComponent(trailer.key)}?autoplay=1&rel=0" title="${esc(title)} trailer" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen></iframe></div>`;
+    tb.remove();
+  };
+}
+function closeDetail(){ preview = null; openToken++; detail.hidden = true; selected = null; renderPins(); markListSelection(); }
 
 /* ================= profile + logbook ================= */
 function setOwnerHeader(){
@@ -1218,14 +1271,21 @@ function renderPoster(){
       <div class="field">Style${seg("Style", Object.entries(MM.POSTER_THEMES).map(([k,t])=>`<button type="button" data-theme="${k}" aria-pressed="${posterOpts.theme===k}"><i style="background:${t.bg};box-shadow:inset -8px 0 0 ${t.pin}"></i>${t.label}</button>`).join(""))}</div>
       <label class="field" for="ps">Size<select id="ps">${Object.entries(MM.POSTER_SIZES).map(([k,s])=>`<option value="${k}" ${posterOpts.size===k?"selected":""}>${s.label}</option>`).join("")}</select></label>
       <label class="check" for="pk"><input type="checkbox" id="pk" ${posterOpts.showKey?"checked":""}> Include the key of places and titles</label>
-      <div class="cta"><button class="btn" id="pdf">Download PDF</button><button class="btn ghost" id="png">Download PNG</button></div>
-      <p class="hint">The PDF is sized for printing at the size you pick, at 200 dpi. Any print shop, or an online service like Printful or Mpix, can print it. For a home printer, choose A3.</p>
+      <div class="order">
+        <b class="sub" style="font-size:15px">Order a print</b>
+        <p class="hint" style="margin:0">Printed on heavyweight matte paper and shipped to your door. Unframed or framed.</p>
+        <div class="cta"><button class="btn" id="order">${ORDER_URL ? "Order this print" : "Order a print"}</button></div>
+        <p class="hint" id="ordermsg" style="margin:0"></p>
+      </div>
     </div>`;
   el.querySelectorAll("[data-theme]").forEach(b=>b.onclick = ()=>{ posterOpts.theme = b.dataset.theme; el.querySelectorAll("[data-theme]").forEach(x=>x.setAttribute("aria-pressed", String(x===b))); drawPoster(); });
   $("#ps").onchange = e=>{ posterOpts.size = e.target.value; drawPoster(); };
   $("#pk").onchange = e=>{ posterOpts.showKey = e.target.checked; drawPoster(); };
-  $("#png").onclick = ()=>downloadPoster("png");
-  $("#pdf").onclick = ()=>downloadPoster("pdf");
+  $("#order").onclick = ()=>{
+    if(ORDER_URL){ location.href = ORDER_URL; return; }
+    $("#ordermsg").textContent = "Printed posters are coming soon. We'll let you know when you can order yours.";
+    try{ MM.lsSet("mm-poster-interest", {at:Date.now(), size:posterOpts.size, theme:posterOpts.theme}); }catch(e){}
+  };
   drawPoster();
 }
 async function drawPoster(){
