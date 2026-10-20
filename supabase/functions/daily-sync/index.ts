@@ -1,7 +1,9 @@
 // MovieMap: keep every linked Letterboxd map up to date, even when nobody opens the site.
 // Called by a schedule (see supabase/migrations/003_daily_sync.sql). Each run works through the
-// members whose maps are oldest, adds any new Letterboxd films with a setting, and stops before
-// the function's time limit; the next run carries on.
+// members whose maps are oldest, then the starter map (supabase/migrations/007_starter_map.sql):
+// adds new Letterboxd films with a setting, copies rating changes, removes films taken off Letterboxd,
+// and mirrors friends. It stops before the function's time limit; a map that isn't finished stays due,
+// so the next run carries on. POST {"starter":"<username>"} syncs just that starter map.
 //
 // Secrets (Edge Functions → Secrets):
 //   CRON_SECRET   any long random string; the schedule sends it so nobody else can trigger this
@@ -13,7 +15,8 @@ const SERVICE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 const TMDB_KEY = Deno.env.get("TMDB_KEY") || "3cd25fb4afb7cee1db7ca88a3c386a30";
 const UA = { "User-Agent": "MovieMap/1.0 (+https://dominicvhoule.github.io/moviemap/)" };
-const TIME_BUDGET = 110_000;          // stop starting new work after this many ms
+const TIME_BUDGET = 100_000;          // stop starting new work after this many ms
+const PARALLEL = 4;                   // films placed at once (Wikidata allows 5 queries at a time)
 const STALE_HOURS = 20;               // a member is due once their map is this old
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -205,12 +208,13 @@ async function fromCountry(iso: string[]): Promise<Setting | null> {
 }
 
 async function settingFor(d: NonNullable<Awaited<ReturnType<typeof details>>>): Promise<Setting | null> {
-  const cached = await db(`film_settings?tmdb_id=eq.${d.id}&source=in.(wikidata,ai)&select=*`).catch(() => []);
+  const cached = await db(`film_settings?tmdb_id=eq.${d.id}&source=in.(wikidata,wikipedia,ai)&select=*`).catch(() => []);
   if (cached?.[0]) { const c = cached[0]; return { place: c.place, country: c.country, continent: c.continent, lat: c.lat, lon: c.lon, approx: c.approx, note: c.note, source: c.source }; }
   let s: Setting | null = null;
   if (d.qid) s = await fromWikidata(d.qid).catch(() => null);
-  if (s) { await db("film_settings?on_conflict=tmdb_id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ tmdb_id: d.id, place: s.place, country: s.country, continent: s.continent, lat: s.lat, lon: s.lon, approx: s.approx, note: s.note, source: "wikidata" }) }).catch(() => {}); return s; }
-  s = await fromWikipedia(d.qid, d.title, d.year, d.tv).catch(() => null);
+  if (!s) s = await fromWikipedia(d.qid, d.title, d.year, d.tv).catch(() => null);
+  // Share what was found, so nobody has to look this title up again.
+  if (s) await db("film_settings?on_conflict=tmdb_id", { method: "POST", headers: { Prefer: "resolution=merge-duplicates" }, body: JSON.stringify({ tmdb_id: d.id, place: s.place, country: s.country, continent: s.continent, lat: s.lat, lon: s.lon, approx: s.approx, note: s.note ? s.note.slice(0, 500) : null, source: s.source }) }).catch(() => {});
   return s ?? await fromCountry(d.iso).catch(() => null);
 }
 
@@ -267,81 +271,119 @@ async function syncFriends(p: { id: string; letterboxd: string; lb_seen?: string
 const slugify = (t: string) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/&/g, "").replace(/['’.]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 type Log = { id: number; title: string; year: number | null; tmdb_id: number | null; rating: number | null; lb_slug: string | null };
 
-async function syncMember(p: { id: string; letterboxd: string }, deadline: number) {
-  const { entries, grid, complete } = await letterboxd(p.letterboxd, deadline);
+// Where a map's films live: a member's logs, or a starter map's starter_logs.
+type Target = { table: "logs" | "starter_logs"; col: "user_id" | "map"; val: string; conflict: string };
+const memberTarget = (id: string): Target => ({ table: "logs", col: "user_id", val: id, conflict: "user_id,title,year" });
+const starterTarget = (name: string): Target => ({ table: "starter_logs", col: "map", val: name, conflict: "map,title,year" });
+
+// Run fn over items, a few at a time, until done or out of time. True if every item was handled.
+async function pool<T>(items: T[], n: number, deadline: number, fn: (t: T) => Promise<void>) {
+  let i = 0;
+  await Promise.all(Array.from({ length: n }, async () => {
+    while (i < items.length && Date.now() < deadline) { const t = items[i++]; try { await fn(t); } catch { /* skip this one */ } }
+  }));
+  return i >= items.length;
+}
+
+async function syncMap(t: Target, username: string, deadline: number) {
+  const { entries, grid, complete } = await letterboxd(username, deadline);
   const gridBySlug = new Map(grid.map((g) => [g.slug!, g]));
   const gridByKey = new Map(grid.filter((g) => g.year).map((g) => [norm(g.title) + "|" + g.year, g]));
   // Diary entries first (exact ids), then the rest of the grid; grid ratings are the current ones.
   const todo: Entry[] = [];
   entries.forEach((e) => { const g = (e.slug && gridBySlug.get(e.slug)) || gridByKey.get(norm(e.title) + "|" + (e.year ?? "")); todo.push({ ...e, slug: e.slug ?? g?.slug ?? null, rating: g ? g.rating : e.rating }); });
-  grid.forEach((g) => { if (!todo.some((t) => t.slug === g.slug)) todo.push(g); });
+  grid.forEach((g) => { if (!todo.some((x) => x.slug === g.slug)) todo.push(g); });
 
-  let have: Log[] = await db(`logs?user_id=eq.${p.id}&select=id,title,year,tmdb_id,rating,lb_slug&limit=10000`) ?? [];
+  const owner = `${t.col}=eq.${encodeURIComponent(t.val)}`;
+  let have: Log[] = await db(`${t.table}?${owner}&select=id,title,year,tmdb_id,rating,lb_slug&limit=10000`) ?? [];
   const ids = new Set(have.map((h) => h.tmdb_id).filter(Boolean)), keys = new Set(have.map((h) => norm(h.title) + "|" + (h.year ?? "")));
   const slugs = new Set(have.map((h) => h.lb_slug).filter(Boolean));
-  const seen = new Set<string>();
+  const once = new Set<string>();
+  const fresh = todo.filter((e) => {
+    const k = norm(e.title) + "|" + (e.year ?? ""), dk = e.tmdb ? "t" + e.tmdb : k;
+    if ((e.slug && slugs.has(e.slug)) || once.has(dk) || keys.has(k) || (e.tmdb && ids.has(e.tmdb))) return false;
+    once.add(dk); return true;
+  });
   let added = 0;
-  for (const e of todo) {
-    if (Date.now() > deadline) break;
-    const k = norm(e.title) + "|" + (e.year ?? "");
-    if ((e.slug && slugs.has(e.slug)) || seen.has(e.tmdb ? "t" + e.tmdb : k) || keys.has(k) || (e.tmdb && ids.has(e.tmdb))) continue;
-    seen.add(e.tmdb ? "t" + e.tmdb : k);
+  const allPlaced = await pool(fresh, PARALLEL, deadline, async (e) => {
     const id = e.tmdb ?? await match(e.title, e.year);
-    if (!id || ids.has(id)) continue;
-    const d = await details(id); if (!d) continue;
-    const s = await settingFor(d); if (!s) continue;
-    await db("logs?on_conflict=user_id,title,year", {
+    if (!id || ids.has(id)) return;
+    ids.add(id);
+    const d = await details(id); if (!d) return;
+    const s = await settingFor(d); if (!s) return;
+    await db(`${t.table}?on_conflict=${t.conflict}`, {
       method: "POST", headers: { Prefer: "resolution=ignore-duplicates" },
-      body: JSON.stringify({ user_id: p.id, title: e.title, year: e.year ?? d.year, director: d.director || null, tmdb_id: d.id, poster_path: d.poster,
+      body: JSON.stringify({ [t.col]: t.val, title: e.title, year: e.year ?? d.year, director: d.director || null, tmdb_id: d.id, poster_path: d.poster,
         place: s.place, country: s.country, continent: s.continent, lat: +s.lat.toFixed(3), lon: +s.lon.toFixed(3), approx: s.approx,
         note: s.note ? s.note.slice(0, 500) : null, rating: e.rating && e.rating >= 0.5 ? e.rating : null, watched_on: e.watched, source: s.source, lb_slug: e.slug }),
     });
-    ids.add(d.id); keys.add(k); if (e.slug) slugs.add(e.slug); added++;
-  }
+    added++;
+  });
   // With the complete list: link older pins, copy ratings over, and remove films taken off Letterboxd.
-  const out = { added, rated: 0, removed: 0, held: 0 };
+  const out = { added, rated: 0, removed: 0, held: 0, left: allPlaced ? 0 : fresh.length - added, finished: false };
   if (!complete || !grid.length || Date.now() > deadline) return out;
-  have = await db(`logs?user_id=eq.${p.id}&select=id,title,year,tmdb_id,rating,lb_slug&limit=10000`) ?? [];
+  have = await db(`${t.table}?${owner}&select=id,title,year,tmdb_id,rating,lb_slug&limit=10000`) ?? [];
   const claimed = new Set(have.map((h) => h.lb_slug).filter(Boolean));
   for (const h of have) {
     if (h.lb_slug) continue;
     const g = gridByKey.get(norm(h.title) + "|" + (h.year ?? "")) || gridBySlug.get(slugify(h.title) + (h.year ? "-" + h.year : "")) || gridBySlug.get(slugify(h.title));
     if (!g || claimed.has(g.slug)) continue;
-    await db(`logs?id=eq.${h.id}`, { method: "PATCH", body: JSON.stringify({ lb_slug: g.slug }) });
+    await db(`${t.table}?id=eq.${h.id}`, { method: "PATCH", body: JSON.stringify({ lb_slug: g.slug }) });
     h.lb_slug = g.slug; claimed.add(g.slug);
   }
   for (const h of have) {
     const g = h.lb_slug ? gridBySlug.get(h.lb_slug) : null; if (!g) continue;
     const want = g.rating != null ? g.rating : null, now = h.rating != null ? Number(h.rating) : null;
     if (want === now) continue;
-    await db(`logs?id=eq.${h.id}`, { method: "PATCH", body: JSON.stringify({ rating: want }) });
+    await db(`${t.table}?id=eq.${h.id}`, { method: "PATCH", body: JSON.stringify({ rating: want }) });
     out.rated++;
   }
   const linked = have.filter((h) => h.lb_slug), gone = linked.filter((h) => !gridBySlug.has(h.lb_slug!));
   // A sudden large disappearance is more likely a reading problem than a real clear-out: hold off.
   if (gone.length > Math.max(5, linked.length * 0.3)) { out.held = gone.length; return out; }
   for (let i = 0; i < gone.length; i += 100) {
-    await db(`logs?id=in.(${gone.slice(i, i + 100).map((h) => h.id).join(",")})`, { method: "DELETE" });
+    await db(`${t.table}?id=in.(${gone.slice(i, i + 100).map((h) => h.id).join(",")})`, { method: "DELETE" });
     out.removed += Math.min(100, gone.length - i);
   }
+  out.finished = allPlaced;
   return out;
 }
 
 Deno.serve(async (req) => {
   if (!CRON_SECRET || req.headers.get("x-cron-secret") !== CRON_SECRET) return new Response("forbidden", { status: 403 });
   const started = Date.now(), deadline = started + TIME_BUDGET;
+  let body: { starter?: string } = {};
+  try { body = await req.json(); } catch { /* scheduled runs send {} */ }
   const due = new Date(Date.now() - STALE_HOURS * 3600_000).toISOString();
-  const q = (cols: string) => db(`profiles?letterboxd=not.is.null&or=(last_synced.is.null,last_synced.lt.${due})&select=${cols}&order=last_synced.asc.nullsfirst&limit=50`);
-  // lb_seen arrives with migration 005; work without it until then.
-  const members: { id: string; letterboxd: string; lb_seen?: string[] }[] = await q("id,letterboxd,lb_seen").catch(() => q("id,letterboxd")) ?? [];
   const report: Record<string, unknown> = {};
-  for (const m of members) {
-    if (Date.now() > deadline) break;
-    try { report[m.letterboxd] = await syncMember(m, deadline); }
-    catch (e) { report[m.letterboxd] = "error: " + String((e as Error).message).slice(0, 120); }
-    try { const n = await syncFriends(m); if (n.added || n.removed) report[m.letterboxd + " friends"] = `+${n.added} -${n.removed}`; } catch { /* friends are a bonus */ }
-    await db(`profiles?id=eq.${m.id}`, { method: "PATCH", body: JSON.stringify({ last_synced: new Date().toISOString() }) }).catch(() => {});
-    await sleep(500);   // be gentle with Letterboxd
+
+  if (!body.starter) {
+    const q = (cols: string) => db(`profiles?letterboxd=not.is.null&or=(last_synced.is.null,last_synced.lt.${due})&select=${cols}&order=last_synced.asc.nullsfirst&limit=50`);
+    // lb_seen arrives with migration 005; work without it until then.
+    const members: { id: string; letterboxd: string; lb_seen?: string[] }[] = await q("id,letterboxd,lb_seen").catch(() => q("id,letterboxd")) ?? [];
+    for (const m of members) {
+      if (Date.now() > deadline) break;
+      let done = true;
+      try { const r = await syncMap(memberTarget(m.id), m.letterboxd, deadline); report[m.letterboxd] = r; done = r.finished || r.left === 0; }
+      catch (e) { report[m.letterboxd] = "error: " + String((e as Error).message).slice(0, 120); }
+      try { const n = await syncFriends(m); if (n.added || n.removed) report[m.letterboxd + " friends"] = `+${n.added} -${n.removed}`; } catch { /* friends are a bonus */ }
+      // An unfinished map stays due, so the next run picks it up where this one stopped.
+      if (done) await db(`profiles?id=eq.${m.id}`, { method: "PATCH", body: JSON.stringify({ last_synced: new Date().toISOString() }) }).catch(() => {});
+      await sleep(500);   // be gentle with Letterboxd
+    }
   }
-  return new Response(JSON.stringify({ checked: Object.keys(report).length, due: members.length, ms: Date.now() - started, report }), { headers: { "Content-Type": "application/json" } });
+
+  // Starter maps (shown to visitors who aren't signed in).
+  const starters: { username: string }[] = await db(body.starter
+    ? `starters?username=eq.${encodeURIComponent(body.starter)}&select=username`
+    : `starters?or=(last_synced.is.null,last_synced.lt.${due})&select=username&order=last_synced.asc.nullsfirst`).catch(() => []) ?? [];
+  for (const st of starters) {
+    if (Date.now() > deadline) break;
+    try {
+      const r = await syncMap(starterTarget(st.username), st.username, deadline);
+      report["starter " + st.username] = r;
+      if (r.finished) await db(`starters?username=eq.${encodeURIComponent(st.username)}`, { method: "PATCH", body: JSON.stringify({ last_synced: new Date().toISOString() }) });
+    } catch (e) { report["starter " + st.username] = "error: " + String((e as Error).message).slice(0, 120); }
+  }
+  return new Response(JSON.stringify({ ms: Date.now() - started, report }), { headers: { "Content-Type": "application/json" } });
 });

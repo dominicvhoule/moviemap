@@ -59,7 +59,7 @@ if(sb){
   MM.aiSetting = null;   // switched on after sign-in, once the function answers
   MM.saveRemoteSettings = async map => {
     if(!session) return;
-    const rows = Object.keys(map).filter(id=>["wikidata","production"].includes(map[id].src) && !map[id].aiTried).map(id=>{ const s = map[id]; return {tmdb_id:+id, place:s.p, country:s.c, continent:s.cont||null, lat:s.lat, lon:s.lon, approx:!!s.ap, note:s.n||null, source:s.src}; });
+    const rows = Object.keys(map).filter(id=>["wikidata","wikipedia","production"].includes(map[id].src)).map(id=>{ const s = map[id]; return {tmdb_id:+id, place:s.p, country:s.c, continent:s.cont||null, lat:s.lat, lon:s.lon, approx:!!s.ap, note:s.n||null, source:s.src}; });
     for(let i=0; i<rows.length; i+=200) await sb.from("film_settings").upsert(rows.slice(i, i+200), {onConflict:"tmdb_id", ignoreDuplicates:true});
   };
 }

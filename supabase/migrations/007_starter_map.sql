@@ -8,7 +8,7 @@ create table if not exists public.starters (
 );
 create table if not exists public.starter_logs (
   id          bigint generated always as identity primary key,
-  map         text not null references public.starters(username) on delete cascade,
+  map         text not null references public.starters(username),
   title       text not null check (char_length(title) <= 300),
   year        int,
   director    text,
@@ -29,9 +29,7 @@ create table if not exists public.starter_logs (
 create index if not exists starter_logs_map on public.starter_logs (map, lb_slug);
 alter table public.starters enable row level security;
 alter table public.starter_logs enable row level security;
-drop policy if exists "starters are public" on public.starters;
 create policy "starters are public" on public.starters for select using (true);
-drop policy if exists "starter films are public" on public.starter_logs;
 create policy "starter films are public" on public.starter_logs for select using (true);
 
 insert into public.starters (username, display_name) values ('mattgoold', 'mattgoold') on conflict do nothing;

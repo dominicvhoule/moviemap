@@ -282,7 +282,7 @@ MM.resolveSettings = async function(dets, onStep, titles){
   const need = dets.filter(d=>d && !curated.has(d.tmdb) && (!MM.settingCache.get(d.tmdb) || weakCached(MM.settingCache.get(d.tmdb))));
   if(MM.remoteSettings && need.length){
     // Only trust shared entries that came from a recorded setting; country fallbacks get re-checked.
-    try{ const got = await MM.remoteSettings(need.map(d=>d.tmdb)); Object.keys(got).forEach(id=>{ if(got[id].src === "wikidata" || got[id].src === "ai") MM.settingCache.put(id, got[id]); }); }catch(e){}
+    try{ const got = await MM.remoteSettings(need.map(d=>d.tmdb)); Object.keys(got).forEach(id=>{ if(["wikidata","wikipedia","ai"].includes(got[id].src)) MM.settingCache.put(id, got[id]); }); }catch(e){}
   }
   const still = need.filter(d=>!MM.settingCache.get(d.tmdb) || weakCached(MM.settingCache.get(d.tmdb)));
   const wd = await MM.wikidataSettings(still.map(d=>d.qid));
@@ -305,7 +305,7 @@ MM.resolveSettings = async function(dets, onStep, titles){
       s = MM.fallbackSetting(d) || w || null;
       if(s) s = Object.assign({}, s, {wikiTried: MM.wikiPlotSetting ? 1 : 0, aiTried: MM.aiSetting ? 1 : 0});
     }
-    if(s){ MM.settingCache.put(d.tmdb, s); if(s.src === "production" || s.src === "wikidata") fresh[d.tmdb] = s; }
+    if(s){ MM.settingCache.put(d.tmdb, s); if(["production","wikidata","wikipedia"].includes(s.src)) fresh[d.tmdb] = s; }
     done++; if(onStep) onStep(done, noRecord.length);
   });
   if(MM.saveRemoteSettings && Object.keys(fresh).length){ try{ await MM.saveRemoteSettings(fresh); }catch(e){} }
