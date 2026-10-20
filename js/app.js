@@ -615,11 +615,11 @@ async function openCountry(geo){
   home.forEach(f=>f._away = false);
   el.innerHTML = head + `
     <h3 class="csec">Made in ${esc(name)} <span>${home.length}</span></h3>
-    ${home.length ? `<ul class="films">${filmRows(home)}</ul>` : `<p class="hint">None yet: everything here was made somewhere else.</p>`}
+    ${home.length ? `<ul class="cfilms">${filmRows(home)}</ul>` : `<p class="hint">None yet: everything here was made somewhere else.</p>`}
     <h3 class="csec">Set in ${esc(name)}, made elsewhere <span>${away.length}</span></h3>
-    ${away.length ? `<ul class="films away">${filmRows(away)}</ul>` : `<p class="hint">None: every title set here was made here.</p>`}`;
+    ${away.length ? `<ul class="cfilms away">${filmRows(away)}</ul>` : `<p class="hint">None: every title set here was made here.</p>`}`;
   bind();
-  el.querySelectorAll("ul.films").forEach((ul, k)=>{ const list = k === 0 && home.length ? home : away; ul.querySelectorAll("button").forEach(b=>b.onclick = ()=>openFilm(list[+b.dataset.i], true)); });
+  el.querySelectorAll("ul.cfilms").forEach((ul, k)=>{ const list = k === 0 && home.length ? home : away; ul.querySelectorAll("button").forEach(b=>b.onclick = ()=>openFilm(list[+b.dataset.i], true)); });
 }
 
 // The list view: the same map as a list, country by country.
