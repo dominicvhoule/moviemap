@@ -179,7 +179,7 @@ function swissStyle(){
         set(id, "text-color", water ? "#9A9A9A" : /country|continent|state/.test(id) || /city|capital/.test(id) ? SW.ink : "#3A3A3A");
         set(id, "text-halo-color", water ? SW.water : SW.land);
         set(id, "text-halo-width", 1.2);
-        if(map.getLayoutProperty(id, "icon-image")) hide(id);   // town dots and the like
+        if(map.getLayoutProperty(id, "icon-image")) set(id, "icon-opacity", 0);   // keep the name, drop the town dot
       }
     }
   }
