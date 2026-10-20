@@ -7,7 +7,7 @@
 //   {username}                         recent diary feed (RSS, last 50 entries)
 //   {username, mode:"films", page:N}   one page of the member's watched films (about 72 per page)
 //   {mode:"film", slugs:[...]}         TMDB id + year for up to 20 film slugs (used when a list entry has no year)
-//   {username, mode:"following"}       usernames of the members this person follows (up to 500)
+//   {username, mode:"following"}       usernames of everyone this person follows (complete list, or an error)
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -124,19 +124,21 @@ async function filmInfo(slugs: string[]) {
 }
 
 // ---------- people the member follows ----------
+// Always the complete list or an error, never a partial list (the site unfollows anyone missing from it).
 async function following(username: string) {
   const names: string[] = [];
-  for (let page = 1; page <= 20; page++) {
+  for (let page = 1; page <= 40; page++) {
     const res = await get(`https://letterboxd.com/${username}/following/${page > 1 ? `page/${page}/` : ""}`);
-    if (res.status === 404) return page === 1 ? json({ error: "not_found" }, 404) : json({ username, following: names });
+    if (res.status === 404 && page === 1) return json({ error: "not_found" }, 404);
     if (!res.ok) return json({ error: "upstream", status: res.status }, 502);
     const html = await res.text();
     const found = [...html.matchAll(/<a href="\/([A-Za-z0-9_]{1,30})\/" class="name"/g)].map((m) => m[1]);
+    if (page === 1 && !found.length && !/not following/i.test(html)) return json({ error: "layout" }, 502);
     found.forEach((n) => { if (n.toLowerCase() !== username.toLowerCase() && !names.includes(n)) names.push(n); });
-    if (!found.length || !new RegExp(`/${username}/following/page/${page + 1}/`, "i").test(html)) break;
+    if (!found.length || !new RegExp(`/${username}/following/page/${page + 1}/`, "i").test(html)) return json({ username, following: names, complete: true });
     await new Promise((r) => setTimeout(r, 150));
   }
-  return json({ username, following: names });
+  return json({ error: "too_many" }, 413);
 }
 
 Deno.serve(async (req) => {

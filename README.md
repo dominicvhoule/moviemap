@@ -8,7 +8,7 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 
 - **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings). Every country is labelled, like a printed map. Opening a film suggests similar titles (TMDB recommendations).
 - **Log a film**: search a title, pick the right match, and MovieMap finds the setting and poster. Move the pin if it's wrong.
-- **Letterboxd**: connect your Letterboxd username and every film on your Letterboxd Films page is added, with ratings. The profile stays linked until you press Change profile. Anyone you follow on Letterboxd who's on MovieMap is followed here too. New films are picked up automatically: once a day on the server (if `daily-sync` is set up), and whenever the site is opened (at most every 6 hours, with a full re-read weekly).
+- **Letterboxd**: connect your Letterboxd username and every film on your Letterboxd Films page is added, with ratings. The profile stays linked until you press Change profile. Anyone you follow on Letterboxd who's on MovieMap is followed here too, and unfollowed when you unfollow them there. New films are picked up automatically: once a day on the server (if `daily-sync` is set up), and whenever the site is opened (at most every 6 hours, with a full re-read weekly).
 - **People**: search members by username, follow them, view their maps, find friends from your phone's contacts (Android Chrome), or share an invite link.
 - **Phone layout**: wide map on top, posters in a swipeable strip below.
 
@@ -39,7 +39,7 @@ Without this step the site still works, but films save only in each visitor's br
    - **Edge Functions → Deploy a new function → Via editor**: name it `daily-sync`, paste `supabase/functions/daily-sync/index.ts`, turn **Verify JWT off**, and press **Deploy**.
    - **SQL Editor**: paste `supabase/migrations/003_daily_sync.sql`, replace `PASTE-THE-SAME-CRON-SECRET-HERE` with the same string, and press **Run**. It checks everyone at 09:05 UTC, with a second pass at 09:20.
 
-7. **Letterboxd friends**: run `supabase/migrations/005_letterboxd_friends.sql`, then redeploy `letterboxd-feed` and `daily-sync` with the latest code. Anyone a member follows on Letterboxd who has a MovieMap account is then followed on MovieMap too.
+7. **Letterboxd friends**: run `supabase/migrations/005_letterboxd_friends.sql`, then redeploy `letterboxd-feed` and `daily-sync` with the latest code. Anyone a member follows on Letterboxd who has a MovieMap account is then followed on MovieMap too, and unfollowed when they're unfollowed on Letterboxd. Follows made by hand on MovieMap are never touched.
 
 8. **AI settings**: run `supabase/migrations/002_ai_settings.sql` in the SQL Editor. Create an API key at [console.anthropic.com](https://console.anthropic.com/) (add a payment method; it costs well under a cent per title). In **Edge Functions → Secrets**, add `ANTHROPIC_API_KEY`. Then deploy `supabase/functions/film-setting/index.ts` as a new function named `film-setting`, with "Verify JWT" on.
 

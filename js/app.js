@@ -742,36 +742,52 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
     return {error:e.message};
   }finally{ syncing = false; }
 }
-// Friends: anyone you follow on Letterboxd who has a MovieMap account (with that Letterboxd profile
-// linked) is followed here too. Each friend is only added once, so unfollowing them here sticks.
+// Friends mirror Letterboxd: anyone you follow there who has a MovieMap account (with that Letterboxd
+// profile linked) is followed here, and unfollowed here when you unfollow them there. Follows you make
+// by hand on MovieMap are never touched, and unfollowing a Letterboxd friend here sticks until you
+// unfollow and re-follow them on Letterboxd.
 const lbFriendsKey = () => "mm-lb-friends:" + (me ? me.id : "");
 async function linkLetterboxdFriends(quiet){
   if(!cloud() || !me.letterboxd) return;
-  let names;
-  try{ names = (await lbInvoke({username:me.letterboxd, mode:"following"})).following; }catch(e){ return; }
-  if(!Array.isArray(names)) return;                       // the deployed function predates friends
-  const done = new Set([...(Array.isArray(me.lb_seen) ? me.lb_seen : []), ...MM.lsGet(lbFriendsKey(), [])].map(n=>String(n).toLowerCase()));
-  const fresh = names.filter(n=>!done.has(n.toLowerCase()));
-  const found = [];
-  for(let i=0; i<fresh.length; i+=40){
-    const part = fresh.slice(i, i+40);
-    const {data} = await sb.from("profiles").select("id,username,display_name,letterboxd").or(part.map(n=>`letterboxd.ilike.${n}`).join(","));
-    const want = new Set(part.map(n=>n.toLowerCase()));
-    (data || []).forEach(p=>{ if(p.id !== me.id && p.letterboxd && want.has(p.letterboxd.toLowerCase())) found.push(p); });
-  }
-  const report = {checked:Date.now(), following:names.length, onMovieMap:MM.lsGet(lbFriendsKey() + ":n", 0)};
-  if(found.length){
-    const {error} = await sb.from("follows").upsert(found.map(p=>({follower:me.id, followee:p.id})), {onConflict:"follower,followee", ignoreDuplicates:true});
+  let d;
+  try{ d = await lbInvoke({username:me.letterboxd, mode:"following"}); }catch(e){ return; }
+  if(!d || !Array.isArray(d.following) || !d.complete) return;   // older function, or not the full list: change nothing
+  const names = d.following, now = new Set(names.map(n=>n.toLowerCase()));
+  const seen = new Set([...(Array.isArray(me.lb_seen) ? me.lb_seen : []), ...MM.lsGet(lbFriendsKey(), [])].map(n=>String(n).toLowerCase()));
+  const lookup = async list => {
+    const out = [];
+    for(let i=0; i<list.length; i+=40){
+      const part = list.slice(i, i+40), want = new Set(part.map(n=>n.toLowerCase()));
+      const {data} = await sb.from("profiles").select("id,username,letterboxd").or(part.map(n=>`letterboxd.ilike.${n}`).join(","));
+      (data || []).forEach(p=>{ if(p.id !== me.id && p.letterboxd && want.has(p.letterboxd.toLowerCase())) out.push(p); });
+    }
+    return out;
+  };
+  // Someone you already followed by hand stays a hand-made follow, so Letterboxd never removes them.
+  const {data:mine} = await sb.from("follows").select("followee").eq("follower", me.id);
+  const already = new Set((mine || []).map(r=>r.followee));
+  const toAdd = (await lookup(names.filter(n=>!seen.has(n.toLowerCase())))).filter(p=>!already.has(p.id));
+  const gone = [...seen].filter(n=>!now.has(n));
+  const toRemove = gone.length ? await lookup(gone) : [];
+  if(toAdd.length){
+    const {error} = await sb.from("follows").upsert(toAdd.map(p=>({follower:me.id, followee:p.id})), {onConflict:"follower,followee", ignoreDuplicates:true});
     if(error) return;
-    const seen = [...done, ...found.map(p=>p.letterboxd.toLowerCase())];
-    MM.lsSet(lbFriendsKey(), seen);
-    const {error:e2} = await sb.from("profiles").update({lb_seen:seen}).eq("id", me.id);
-    if(!e2) me.lb_seen = seen;
-    report.onMovieMap += found.length; MM.lsSet(lbFriendsKey() + ":n", report.onMovieMap);
-    const who = found.slice(0, 3).map(p=>"@" + p.username).join(", ") + (found.length > 3 ? ` and ${found.length - 3} more` : "");
-    toast(`Now following ${who} from your Letterboxd friends`);
   }
-  MM.lsSet(lbFriendsKey() + ":report", report);
+  if(toRemove.length){
+    const {error} = await sb.from("follows").delete().eq("follower", me.id).in("followee", toRemove.map(p=>p.id));
+    if(error) return;
+  }
+  if(toAdd.length || gone.length){
+    const next = [...[...seen].filter(n=>now.has(n)), ...toAdd.map(p=>p.letterboxd.toLowerCase())];
+    MM.lsSet(lbFriendsKey(), next);
+    const {error} = await sb.from("profiles").update({lb_seen:next}).eq("id", me.id);
+    if(!error) me.lb_seen = next;
+  }
+  const list = p => p.slice(0, 3).map(x=>"@" + x.username).join(", ") + (p.length > 3 ? ` and ${p.length - 3} more` : "");
+  if(toAdd.length) toast(`Now following ${list(toAdd)} from your Letterboxd friends`);
+  if(toRemove.length) toast(`Unfollowed ${list(toRemove)}, as you did on Letterboxd`);
+  const onMM = (await lookup(names)).length;
+  MM.lsSet(lbFriendsKey() + ":report", {checked:Date.now(), following:names.length, onMovieMap:onMM});
   if(location.hash === "#/import" && !lbEditing) renderImport();
 }
 
@@ -821,7 +837,7 @@ function renderImport(){
   const onMap = new Set(myFilms.map(f=>f.tmdb).filter(Boolean)), mk = myKeys();
   const missing = rep ? rep.missed.filter(m=>!(m.tmdb && onMap.has(m.tmdb)) && !mk.has(MM.filmKey(m))) : [];
   el.innerHTML = `<h2 class="h">Letterboxd</h2>
-    <p class="hint">Connect your Letterboxd username and every film you've watched shows up on your map. New ones are added automatically, and anyone you follow on Letterboxd who's on MovieMap is followed here too. It reads your public Letterboxd profile, so there's no password involved.</p>
+    <p class="hint">Connect your Letterboxd username and every film you've watched shows up on your map. New ones are added automatically, and the people you follow on Letterboxd who are on MovieMap are followed here too (and unfollowed when you unfollow them there). It reads your public Letterboxd profile, so there's no password involved.</p>
     ${cloud() ? `
     ${lb && !lbEditing ? `
     <div class="linked">
@@ -829,7 +845,7 @@ function renderImport(){
       <div class="cta"><button class="btn ghost" type="button" id="lbchange">Change profile</button></div>
     </div>
     <p class="hint" id="lbs">New films are added automatically.${last ? " Last checked " + new Date(last).toLocaleString([], {dateStyle:"medium", timeStyle:"short"}) + "." : ""}</p>
-    ${(fr=>fr ? `<p class="hint">Friends: you follow ${fr.following} ${fr.following===1?"person":"people"} on Letterboxd${fr.onMovieMap ? `; ${fr.onMovieMap} ${fr.onMovieMap===1?"is":"are"} on MovieMap and followed here too (see <a href="#/explore">People</a>)` : ". None of them are on MovieMap yet. When they join and link Letterboxd, you'll follow them here automatically"}.</p>` : "")(MM.lsGet(lbFriendsKey() + ":report", null))}`
+    ${(fr=>fr ? `<p class="hint">Friends: you follow ${fr.following} ${fr.following===1?"person":"people"} on Letterboxd${fr.onMovieMap ? `; ${fr.onMovieMap} ${fr.onMovieMap===1?"is":"are"} on MovieMap (see <a href="#/explore">People</a>)` : ". None of them are on MovieMap yet"}. Following or unfollowing someone on Letterboxd does the same here.</p>` : "")(MM.lsGet(lbFriendsKey() + ":report", null))}`
     : `
     <form class="search" id="lbf"><label for="lbu" class="sr">Letterboxd username</label><input id="lbu" autocomplete="off" spellcheck="false" placeholder="your Letterboxd username" value="${lbEditing ? "" : esc(lb||"")}"><button class="btn" type="submit">Connect</button>${lbEditing ? `<button class="btn ghost" type="button" id="lbcancel">Cancel</button>` : ""}</form>
     <p class="hint" id="lbs">${lbEditing ? `Currently linked to letterboxd.com/${esc(lb)}. Films already on your map stay there.` : "Your Letterboxd profile needs to be public."}</p>`}

@@ -206,35 +206,52 @@ async function settingFor(d: NonNullable<Awaited<ReturnType<typeof details>>>): 
 }
 
 // ---------- friends: follow anyone this member follows on Letterboxd who is on MovieMap ----------
-async function letterboxdFollowing(username: string): Promise<string[]> {
+// The full list of who a member follows, or null if it couldn't be read completely (never a partial
+// list, since anything missing from it would be unfollowed).
+async function letterboxdFollowing(username: string): Promise<string[] | null> {
   const names: string[] = [];
-  for (let page = 1; page <= 20; page++) {
+  for (let page = 1; page <= 40; page++) {
     const r = await fetch(`https://letterboxd.com/${username}/following/${page > 1 ? `page/${page}/` : ""}`, { headers: UA });
-    if (!r.ok) break;
+    if (!r.ok) return null;
     const html = await r.text();
     const found = [...html.matchAll(/<a href="\/([A-Za-z0-9_]{1,30})\/" class="name"/g)].map((m) => m[1]);
+    if (page === 1 && !found.length && !/not following/i.test(html)) return null;   // page layout changed
     found.forEach((n) => { if (n.toLowerCase() !== username.toLowerCase() && !names.includes(n)) names.push(n); });
-    if (!found.length || !new RegExp(`/${username}/following/page/${page + 1}/`, "i").test(html)) break;
+    if (!found.length || !new RegExp(`/${username}/following/page/${page + 1}/`, "i").test(html)) return names;
     await sleep(300);
   }
-  return names;
+  return null;   // more than 1,000 follows: too many to be sure, leave things as they are
 }
+// Mirror Letterboxd: follow friends who are on MovieMap, and unfollow ones followed that way who were
+// unfollowed on Letterboxd. Follows made by hand on MovieMap are never touched.
 async function syncFriends(p: { id: string; letterboxd: string; lb_seen?: string[] | null }) {
   const names = await letterboxdFollowing(p.letterboxd);
+  if (!names) return { added: 0, removed: 0 };
+  const now = new Set(names.map((n) => n.toLowerCase()));
   const seen = new Set((p.lb_seen ?? []).map((n) => n.toLowerCase()));
-  const fresh = names.filter((n) => !seen.has(n.toLowerCase()));
-  const found: { id: string; letterboxd: string }[] = [];
-  for (let i = 0; i < fresh.length; i += 40) {
-    const part = fresh.slice(i, i + 40), want = new Set(part.map((n) => n.toLowerCase()));
-    const rows = await db(`profiles?select=id,letterboxd&or=(${part.map((n) => `letterboxd.ilike.${n}`).join(",")})`) ?? [];
-    rows.forEach((r: { id: string; letterboxd: string }) => { if (r.id !== p.id && r.letterboxd && want.has(r.letterboxd.toLowerCase())) found.push(r); });
+  const lookup = async (list: string[]) => {
+    const out: { id: string; letterboxd: string }[] = [];
+    for (let i = 0; i < list.length; i += 40) {
+      const part = list.slice(i, i + 40), want = new Set(part.map((n) => n.toLowerCase()));
+      const rows = await db(`profiles?select=id,letterboxd&or=(${part.map((n) => `letterboxd.ilike.${n}`).join(",")})`) ?? [];
+      rows.forEach((r: { id: string; letterboxd: string }) => { if (r.id !== p.id && r.letterboxd && want.has(r.letterboxd.toLowerCase())) out.push(r); });
+    }
+    return out;
+  };
+  // Someone already followed by hand stays a hand-made follow, so Letterboxd never removes them.
+  const mine: { followee: string }[] = await db(`follows?follower=eq.${p.id}&select=followee`) ?? [];
+  const already = new Set(mine.map((r) => r.followee));
+  const toAdd = (await lookup(names.filter((n) => !seen.has(n.toLowerCase())))).filter((f) => !already.has(f.id));
+  const gone = [...seen].filter((n) => !now.has(n));
+  const toRemove = gone.length ? await lookup(gone) : [];
+  if (toAdd.length) await db("follows?on_conflict=follower,followee", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates" },
+    body: JSON.stringify(toAdd.map((f) => ({ follower: p.id, followee: f.id }))) });
+  if (toRemove.length) await db(`follows?follower=eq.${p.id}&followee=in.(${toRemove.map((f) => f.id).join(",")})`, { method: "DELETE" });
+  if (toAdd.length || gone.length) {
+    const next = [...[...seen].filter((n) => now.has(n)), ...toAdd.map((f) => f.letterboxd.toLowerCase())];
+    await db(`profiles?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ lb_seen: next }) }).catch(() => {});
   }
-  if (!found.length) return 0;
-  await db("follows?on_conflict=follower,followee", { method: "POST", headers: { Prefer: "resolution=ignore-duplicates" },
-    body: JSON.stringify(found.map((f) => ({ follower: p.id, followee: f.id }))) });
-  const all = [...seen, ...found.map((f) => f.letterboxd.toLowerCase())];
-  await db(`profiles?id=eq.${p.id}`, { method: "PATCH", body: JSON.stringify({ lb_seen: all }) }).catch(() => {});
-  return found.length;
+  return { added: toAdd.length, removed: toRemove.length };
 }
 
 // ---------- one member ----------
@@ -276,7 +293,7 @@ Deno.serve(async (req) => {
     if (Date.now() > deadline) break;
     try { report[m.letterboxd] = await syncMember(m, deadline); }
     catch (e) { report[m.letterboxd] = "error: " + String((e as Error).message).slice(0, 120); }
-    try { const n = await syncFriends(m); if (n) report[m.letterboxd + " friends"] = n; } catch { /* friends are a bonus */ }
+    try { const n = await syncFriends(m); if (n.added || n.removed) report[m.letterboxd + " friends"] = `+${n.added} -${n.removed}`; } catch { /* friends are a bonus */ }
     await db(`profiles?id=eq.${m.id}`, { method: "PATCH", body: JSON.stringify({ last_synced: new Date().toISOString() }) }).catch(() => {});
     await sleep(500);   // be gentle with Letterboxd
   }
