@@ -342,9 +342,10 @@ async function wdq(query){
   return r.ok ? (await r.json()).results.bindings : [];
 }
 const MOVIE_OR_SERIES = `{ ?film wdt:P4947 ?tm . } UNION { ?film wdt:P4983 ?tvid . }`;
-const EXTRA_COLS = `(GROUP_CONCAT(DISTINCT ?g; separator=" ") AS ?gs) (GROUP_CONCAT(DISTINCT ?s; separator=" ") AS ?ss) (SAMPLE(?oc) AS ?made)`;
+const EXTRA_COLS = `(GROUP_CONCAT(DISTINCT ?g; separator=" ") AS ?gs) (GROUP_CONCAT(DISTINCT ?s; separator=" ") AS ?ss) (SAMPLE(?oc) AS ?made) (COUNT(DISTINCT ?anyLoc) AS ?nl)`;
 const EXTRA_WHERE = iso => `OPTIONAL { ?film wdt:P136 ?g . } OPTIONAL { ?film wdt:P921|wdt:P2408 ?s . }
-    OPTIONAL { ?film wdt:P495 ?oc . ?oc wdt:P297 "${iso}" . } OPTIONAL { ?film wikibase:sitelinks ?links . }`;
+    OPTIONAL { ?film wdt:P495 ?oc . ?oc wdt:P297 "${iso}" . } OPTIONAL { ?film wikibase:sitelinks ?links . }
+    OPTIONAL { ?film wdt:P840 ?anyLoc . }`;
 async function titlesSetNear(lat, lon, km, iso){
   return wdq(`SELECT ?film ?tm ?tvid ?locLabel ?links ${EXTRA_COLS} WHERE {
     SERVICE wikibase:around { ?loc wdt:P625 ?c . bd:serviceParam wikibase:center "Point(${(+lon).toFixed(4)} ${(+lat).toFixed(4)})"^^geo:wktLiteral ; wikibase:radius "${km}" . }
@@ -386,7 +387,7 @@ function simContext(f, iso){
   const mid = MM.countryPoint(f.c);
   const countryWide = !f.p || MM.norm(f.p) === MM.norm(f.c) || MM.norm(f.p) === MM.norm(MM.displayCountry(f.c)) || !isFinite(f.lat)
     || (f.ap && mid && Math.abs(mid[0] - f.lon) < 1.5 && Math.abs(mid[1] - f.lat) < 1.5);
-  const key = `s6:${f.tmdb || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
+  const key = `s7:${f.tmdb || MM.filmKey(f)}:${countryWide ? iso : (+f.lat).toFixed(1) + "," + (+f.lon).toFixed(1)}`;
   return {countryWide, key};
 }
 const withDetails = (c, d) => Object.assign({}, c, {t:d.t, y:String(d.y || ""), poster:d.poster});
@@ -410,7 +411,7 @@ async function buildPool(f, iso, ctx){
     let where = b.locLabel ? b.locLabel.value : "";
     // a title set in "Norway" as a whole isn't set near this pin
     if(where && [f.c, MM.displayCountry(f.c)].some(n=>MM.norm(n) === MM.norm(where))){ where = ""; tier = 2; }
-    byId.set(id, {tmdb:id, tier, where, links:b.links ? +b.links.value : 0, made:!!b.made,
+    byId.set(id, {tmdb:id, tier, where, links:b.links ? +b.links.value : 0, made:!!b.made, nl:b.nl ? Math.max(1, +b.nl.value) : 1,
       g:(b.gs && b.gs.value ? b.gs.value.split(" ") : []).map(qidOf), s:(b.ss && b.ss.value ? b.ss.value.split(" ") : []).map(qidOf)});
   });
   if(!ctx.countryWide){
@@ -426,7 +427,10 @@ async function buildPool(f, iso, ctx){
     const genre = myG.size ? c.g.filter(g=>myG.has(g)).length / Math.max(1, Math.min(myG.size, c.g.length || 1)) : 0;
     const topic = Math.min(2, c.s.filter(x=>myS.has(x)).length);
     const rel = related.has(c.tmdb) ? 2.5 - related.get(c.tmdb).rank * 0.05 : 0;
-    return Object.assign(c, {score: genre*3 + topic*2.5 + rel + (c.made ? 1.2 : 0) + Math.log10(1 + c.links) * 0.5 - c.tier * 0.9});
+    // A title made elsewhere that only passes through here (Forrest Gump's Vietnam scenes, one of
+    // several settings) counts for less than one made here or set mostly here.
+    const passing = c.made ? 0 : (1 - 1 / c.nl) * 2.5;
+    return Object.assign(c, {score: genre*3 + topic*2.5 + rel + (c.made ? 2 : 0) - passing + Math.log10(1 + c.links) * 0.4 - c.tier * 0.9});
   }).sort((a,b)=>b.score - a.score);
   // Posters for the best 16, and TMDB's look-alikes checked for the country, all at once.
   const best = scored.slice(0, 16);
