@@ -166,7 +166,7 @@ function buildLabels(){
     // Candidate spots across the country, nearest its middle first.
     const spots = [];
     if(maskAt(p[0], p[1]) === idx) spots.push([p[0], p[1]]);
-    const N = 11;
+    const N = Math.max(12, Math.min(40, Math.round(Math.max(b[1][0]-b[0][0], b[1][1]-b[0][1]) / 3)));
     for(let i=1; i<N; i++) for(let j=1; j<N; j++){
       const x = b[0][0] + (b[1][0]-b[0][0]) * i/N, y = b[0][1] + (b[1][1]-b[0][1]) * j/N;
       if(maskAt(x, y) === idx) spots.push([x, y]);
@@ -186,7 +186,7 @@ function updateLabels(now){
   if(!now){ if(!labelFrame) labelFrame = requestAnimationFrame(()=>{ labelFrame = 0; updateLabels(true); }); return; }
   if(!labels.length || !mask) return;
   const visited = new Set(viewing.films.map(f=>MM.geoName(f.c)));
-  const pins = pinGroups.map(g=>[g.x * k, g.y * k, (g.films.length > 1 ? Math.min(16, 9 + Math.log2(g.films.length)*2) : 7.5) + 3]);
+  const pins = pinGroups.map(g=>[g.x * k, g.y * k, (g.films.length > 1 ? Math.min(16, 9 + Math.log2(g.films.length)*2) : 7.5) + 1.5]);
   const order = [...labels].sort((a,b)=>(visited.has(b.name) - visited.has(a.name)) || b.area - a.area);
   const placed = [], shown = new Map();
   const fits = (d, cx, cy, w, h) => {
