@@ -6,7 +6,7 @@ Live at **https://dominicvhoule.github.io/moviemap/**
 
 ## What it does
 
-- **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings). Every country is labelled, like a printed map. Opening a film suggests well-known titles from the same country.
+- **Map**: every film is a pin at the place its story is set. Dashed pins are approximate (country-level or fictional settings). Every country is labelled, like a printed map. Opening a film suggests similar titles (TMDB recommendations).
 - **Log a film**: search a title, pick the right match, and MovieMap finds the setting and poster. Move the pin if it's wrong.
 - **Letterboxd**: connect your Letterboxd username and every film on your Letterboxd Films page is added, with ratings. The profile stays linked until you press Change profile. New films are picked up automatically: once a day on the server (if `daily-sync` is set up), and whenever the site is opened (at most every 6 hours, with a full re-read weekly).
 - **People**: search members by username, follow them, view their maps, find friends from your phone's contacts (Android Chrome), or share an invite link.
@@ -39,9 +39,7 @@ Without this step the site still works, but films save only in each visitor's br
    - **Edge Functions → Deploy a new function → Via editor**: name it `daily-sync`, paste `supabase/functions/daily-sync/index.ts`, turn **Verify JWT off**, and press **Deploy**.
    - **SQL Editor**: paste `supabase/migrations/003_daily_sync.sql`, replace `PASTE-THE-SAME-CRON-SECRET-HERE` with the same string, and press **Run**. It checks everyone at 09:05 UTC, with a second pass at 09:20.
 
-7. **Shared suggestions**: run `supabase/migrations/004_suggestions.sql` in the SQL Editor. "More like this" lists are then saved for everyone, so each title is only looked up once.
-
-8. **AI settings**: run `supabase/migrations/002_ai_settings.sql` in the SQL Editor. Create an API key at [console.anthropic.com](https://console.anthropic.com/) (add a payment method; it costs well under a cent per title). In **Edge Functions → Secrets**, add `ANTHROPIC_API_KEY`. Then deploy `supabase/functions/film-setting/index.ts` as a new function named `film-setting`, with "Verify JWT" on.
+7. **AI settings**: run `supabase/migrations/002_ai_settings.sql` in the SQL Editor. Create an API key at [console.anthropic.com](https://console.anthropic.com/) (add a payment method; it costs well under a cent per title). In **Edge Functions → Secrets**, add `ANTHROPIC_API_KEY`. Then deploy `supabase/functions/film-setting/index.ts` as a new function named `film-setting`, with "Verify JWT" on.
 
 5. **Letterboxd sync**: **Edge Functions → Deploy a new function → Via editor**. Name it `letterboxd-feed`, replace the sample code with `supabase/functions/letterboxd-feed/index.ts`, and press **Deploy**. Leave "Verify JWT" on, so only signed-in members can use it.
 
