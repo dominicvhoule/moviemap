@@ -112,10 +112,9 @@ const myKeys = () => new Set(myFilms.map(MM.filmKey));
 const POSTERS = false;
 
 /* ================= map ================= */
-// A real street map (MapLibre + OpenFreeMap tiles, free and keyless) styled like Google Maps:
-// green land, blue water, place names that get more detailed as you zoom, and round "saved place"
-// pins. Countries with a film get a faint tint. Pins close together on screen merge into one with
-// a count, and split apart as you zoom in.
+// A real street map (MapLibre + OpenFreeMap tiles, free and keyless) that behaves like Google Maps
+// (place names and detail appear as you zoom, pins merge into counts and split apart) but is drawn in
+// the Swiss palette: grey land, white water and roads, black lettering, red pins.
 let countries = [];
 let viewing = {owner:null, films:[], mine:false};   // what the map shows
 let selected = null, picking = null, preview = null;
@@ -130,18 +129,11 @@ function initMap(){
   map.touchZoomRotate.disableRotation();
   map.addControl(new maplibregl.AttributionControl({compact:true}), "bottom-right");
   map.on("load", ()=>{
-    // English place names where the map has them (like Google Maps in English).
-    for(const l of map.getStyle().layers){
-      if(l.type === "symbol" && map.getLayoutProperty(l.id, "text-field")){
-        map.setLayoutProperty(l.id, "text-field", ["coalesce", ["get","name:en"], ["get","name_en"], ["get","name:latin"], ["get","name"]]);
-      }
-    }
-    // Countries with a film: a light tint under the map's own labels.
+    swissStyle();
+    // Countries with a film: a darker grey under the map's own labels.
     const firstLabel = map.getStyle().layers.find(l=>l.type === "symbol");
-    map.addSource("mm-countries", {type:"geojson", data:{type:"FeatureCollection", features:countries}});
-    map.addLayer({id:"mm-visited", type:"fill", source:"mm-countries", paint:{"fill-color":"#E4002B", "fill-opacity":0.08},
-      filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
-    map.addLayer({id:"mm-visited-line", type:"line", source:"mm-countries", paint:{"line-color":"#E4002B", "line-opacity":0.35, "line-width":0.8},
+    map.addSource("mm-countries", {type:"geojson", data:{type:"FeatureCollection", features:countries.map(unwrapFeature)}});
+    map.addLayer({id:"mm-visited", type:"fill", source:"mm-countries", paint:{"fill-color":"#111111", "fill-opacity":0.16},
       filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
     mapReady = true;
     renderPins(); fitPins(false);
@@ -155,6 +147,57 @@ function initMap(){
     $("#map").classList.remove("picking"); $("#pickhint").hidden = true;
     cb({lon:+ll[0].toFixed(3), lat:+ll[1].toFixed(3), country: hit ? MM.displayCountry(hit.properties.name) : ""});
   });
+}
+// Repaint the OpenFreeMap "liberty" style in black, white and grey, in English, without the clutter.
+const SW = {land:"#E6E6E6", water:"#FFFFFF", road:"#FFFFFF", casing:"#D2D2D2", building:"#D9D9D9", border:"#FFFFFF", ink:"#111111", muted:"#6E6E6E"};
+function swissStyle(){
+  const set = (id, k, v) => { try{ map.setPaintProperty(id, k, v); }catch(e){} };
+  const hide = id => { try{ map.setLayoutProperty(id, "visibility", "none"); }catch(e){} };
+  for(const l of map.getStyle().layers){
+    const id = l.id, t = l.type;
+    if(t === "background") set(id, "background-color", SW.land);
+    else if(t === "raster" || t === "hillshade" || t === "fill-extrusion") hide(id);
+    else if(t === "fill"){
+      if(/water/.test(id)) set(id, "fill-color", SW.water);
+      else if(/building/.test(id)) set(id, "fill-color", SW.building);
+      else hide(id);                                   // parks, woods, landuse: keep the land plain
+    }
+    else if(t === "line"){
+      if(/water|river|stream|canal/.test(id)) set(id, "line-color", SW.water);
+      else if(/boundary|admin/.test(id)){ set(id, "line-color", SW.border); set(id, "line-dasharray", [1]); }
+      else if(/casing/.test(id)) set(id, "line-color", SW.casing);
+      else if(/rail|transit/.test(id)) set(id, "line-color", "#C4C4C4");
+      else set(id, "line-color", SW.road);
+    }
+    else if(t === "symbol"){
+      if(/poi|shield|aerodrome|airport|transit|station|housenumber|oneway/.test(id)){ hide(id); continue; }
+      if(map.getLayoutProperty(id, "text-field")){
+        map.setLayoutProperty(id, "text-field", ["coalesce", ["get","name:en"], ["get","name_en"], ["get","name:latin"], ["get","name"]]);
+        const water = /water|ocean|sea|lake|marine/.test(id);
+        set(id, "text-color", water ? "#9A9A9A" : /country|continent|state/.test(id) || /city|capital/.test(id) ? SW.ink : "#3A3A3A");
+        set(id, "text-halo-color", water ? SW.water : SW.land);
+        set(id, "text-halo-width", 1.2);
+        if(map.getLayoutProperty(id, "icon-image")) hide(id);   // town dots and the like
+      }
+    }
+  }
+}
+// Shapes that cross the date line (Russia, Fiji) jump from +180 to -180 between two points, which
+// the map would draw as a line right across the world. Keep each ring's longitudes continuous instead.
+function unwrapRing(ring){
+  const out = []; let prev = null, shift = 0;
+  for(const [x, y] of ring){
+    if(prev !== null){ const d = x - prev; if(d > 180) shift -= 360; else if(d < -180) shift += 360; }
+    prev = x; out.push([x + shift, y]);
+  }
+  return out;
+}
+function unwrapFeature(f){
+  const g = f.geometry; if(!g) return f;
+  const poly = p => p.map(unwrapRing);
+  const geometry = g.type === "Polygon" ? {type:"Polygon", coordinates:poly(g.coordinates)}
+    : g.type === "MultiPolygon" ? {type:"MultiPolygon", coordinates:g.coordinates.map(poly)} : g;
+  return {type:"Feature", properties:f.properties, geometry};
 }
 function drawBase(){ if(!map) initMap(); else map.resize(); }
 $("#zin").onclick = ()=>map && map.zoomIn();
@@ -215,7 +258,7 @@ function renderPins(){
     markers.push(new maplibregl.Marker({element:pinElement(g), anchor: sel ? "bottom" : "center"}).setLngLat([g.lon, g.lat]).addTo(map));
   });
   const visited = [...new Set(viewing.films.map(f=>MM.geoName(f.c)))];
-  ["mm-visited", "mm-visited-line"].forEach(id=>{ if(map.getLayer(id)) map.setFilter(id, ["in", ["get","name"], ["literal", visited]]); });
+  ["mm-visited"].forEach(id=>{ if(map.getLayer(id)) map.setFilter(id, ["in", ["get","name"], ["literal", visited]]); });
   if(previewMarker){ previewMarker.remove(); previewMarker = null; }
   if(preview){
     const el = document.createElement("div"); el.className = "gpin sel preview"; el.innerHTML = `<span class="b">${ICON.film}</span>`;

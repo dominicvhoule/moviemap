@@ -45,40 +45,41 @@ a:hover{color:var(--red)}
 
 /* ---------- main split: map | 400px column ---------- */
 .app{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 400px}
-.mapwrap{position:relative;min-width:0;background:#AAD3DF;overflow:hidden}
+.mapwrap{position:relative;min-width:0;background:#FFFFFF;overflow:hidden}
 #map{position:absolute;inset:0}
 #map.picking .maplibregl-canvas{cursor:crosshair}
 .maplibregl-ctrl-attrib{font-family:var(--f);font-size:10px}
-/* Pins, Google Maps style: a round badge with a white ring and soft shadow; the open film becomes a teardrop. */
-.gpin{--c:#E4002B;display:block;padding:0;border:0;background:none;cursor:pointer;font:inherit;line-height:0}
-.gpin .b{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:var(--c);color:#fff;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);transition:transform .12s}
-.gpin .b svg{width:14px;height:14px}
-.gpin:hover .b,.gpin:focus-visible .b{transform:scale(1.15)}
+/* Pins: flat red discs with a white ring (no shadows, Swiss); a count when several share a spot;
+   the open film is a black marker pointing at its place. */
+.gpin{display:block;padding:0;border:0;background:none;cursor:pointer;font:inherit;line-height:0}
+.gpin .b{display:grid;place-items:center;width:24px;height:24px;border-radius:50%;background:#E4002B;color:#fff;border:2px solid #fff;outline:1px solid rgba(17,17,17,.18)}
+.gpin .b svg{width:13px;height:13px}
+.gpin:hover .b{background:#111}
 .gpin:focus-visible{outline:none}
-.gpin:focus-visible .b{box-shadow:0 0 0 3px rgba(26,115,232,.6),0 1px 4px rgba(0,0,0,.35)}
-.gpin.series .b{border-radius:7px}
-.gpin.approx .b{background:#fff;color:var(--c);border:2px dashed var(--c)}
-.gpin.many .b{width:30px;height:30px;font:700 12px/1 var(--f)}
+.gpin:focus-visible .b{outline:2px solid #111;outline-offset:1px}
+.gpin.series .b{border-radius:0}
+.gpin.approx .b{background:#fff;color:#E4002B;border:2px dashed #E4002B;outline:none}
+.gpin.approx:hover .b{background:#111;color:#fff;border-color:#111}
+.gpin.many .b{width:28px;height:28px;font:700 12px/1 var(--f)}
 .gpin.many.approx .b{border-style:solid}
-.gpin.sel .b,.gpin.preview .b{width:34px;height:34px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);margin-bottom:6px;background:var(--c);color:#fff;border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.4)}
+.gpin.sel .b,.gpin.preview .b{width:32px;height:32px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);margin-bottom:5px;background:#111;color:#fff;border:2px solid #fff;outline:none}
 .gpin.sel .b>*,.gpin.preview .b>*{transform:rotate(45deg)}
-.gpin.sel .b svg,.gpin.preview .b svg{width:16px;height:16px}
-.gpin.sel:hover .b{transform:rotate(-45deg) scale(1.08)}
+.gpin.sel .b svg,.gpin.preview .b svg{width:15px;height:15px}
 .mapbar{position:absolute;left:24px;top:24px;right:24px;display:flex;justify-content:space-between;align-items:flex-start;gap:12px;pointer-events:none}
 .mapbar>*{pointer-events:auto}
-.whose{background:#fff;color:#202124;padding:10px 16px 12px;max-width:380px;min-width:0;border-radius:24px;box-shadow:0 2px 6px rgba(60,64,67,.3)}
+.whose{background:var(--paper);padding:10px 14px 12px;max-width:380px;min-width:0;border-top:4px solid var(--red)}
 .whose small{display:block;font-size:12px;font-weight:500;color:var(--muted)}
-.whose h2{margin:2px 0 0;font-weight:700;font-size:24px;line-height:1.1;letter-spacing:-.02em;overflow-wrap:anywhere}
-.zoom{display:flex;flex-direction:column;background:#fff;color:#5f6368;flex:none;border-radius:8px;box-shadow:0 1px 4px rgba(60,64,67,.3);overflow:hidden}
-.zoom button{width:40px;height:40px;border:0;background:none;cursor:pointer;font-size:20px;font-weight:400;color:#5f6368}
-.zoom button:hover{background:#f1f3f4;color:#202124}
-.zoom button+button{border-top:1px solid #e8eaed}
-.legend{position:absolute;left:24px;bottom:24px;display:flex;gap:18px;flex-wrap:wrap;background:#fff;padding:8px 14px;font-size:12px;color:#3c4043;border-radius:8px;box-shadow:0 1px 4px rgba(60,64,67,.3)}
+.whose h2{margin:2px 0 0;font-weight:700;font-size:34px;line-height:1;letter-spacing:-.035em;overflow-wrap:anywhere}
+.zoom{display:flex;flex-direction:column;border:1px solid var(--rule);background:var(--paper);flex:none}
+.zoom button{width:36px;height:36px;border:0;background:none;cursor:pointer;font-size:17px;font-weight:500;color:var(--ink)}
+.zoom button:hover{background:var(--ink);color:var(--paper)}
+.zoom button+button{border-top:1px solid var(--rule)}
+.legend{position:absolute;left:24px;bottom:24px;display:flex;gap:18px;flex-wrap:wrap;background:var(--paper);padding:8px 12px;font-size:12px;color:var(--ink)}
 .legend span{display:inline-flex;align-items:center;gap:7px}
-.legend i{width:12px;height:12px;border-radius:50%;background:#E4002B;display:inline-block;border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.15)}
-.legend i.a{background:#fff;border:2px dashed #E4002B;box-shadow:none}
-.legend i.s{border-radius:4px}
-.legend i.c{border-radius:2px;background:rgba(228,0,43,.14);border:1px solid rgba(228,0,43,.45);box-shadow:none}
+.legend i{width:11px;height:11px;border-radius:50%;background:var(--red);display:inline-block}
+.legend i.a{background:var(--paper);border:2px dashed var(--red)}
+.legend i.s{border-radius:0}
+.legend i.c{border-radius:0;background:#C9C9C9}
 .pickhint{position:absolute;left:50%;top:24px;transform:translateX(-50%);background:var(--red);color:#fff;padding:8px 14px;font-weight:500;font-size:14px;white-space:nowrap}
 
 /* ---------- film card: a red title block over white ---------- */
