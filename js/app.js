@@ -26,12 +26,13 @@ const cloud = () => !!(sb && session && me);
 const toRow = f => ({
   title:f.t, year:f.y||null, director:f.d||null, tmdb_id:f.tmdb||null, poster_path:f.poster||null,
   place:f.p||null, country:f.c||null, continent:f.cont||null, lat:f.lat, lon:f.lon, approx:!!f.ap,
-  note:f.n ? String(f.n).slice(0,500) : null, rating:f.r||null, reviewed:!!f.rv, watched_on:f.watched||null, source:f.src||null
+  note:f.n ? String(f.n).slice(0,500) : null, rating:f.r||null, reviewed:!!f.rv, watched_on:f.watched||null, source:f.src||null,
+  lb_slug:f.lbs||null
 });
 const fromRow = r => ({
   id:r.id, t:r.title, y:r.year||"", d:r.director||"", tmdb:r.tmdb_id, poster:r.poster_path, p:r.place||"", c:r.country||"",
   cont:r.continent||"", lat:r.lat, lon:r.lon, ap:r.approx?1:0, n:r.note||"", r:r.rating!=null?+r.rating:null, rv:r.reviewed?1:0,
-  watched:r.watched_on||"", src:r.source||"", created:r.created_at
+  watched:r.watched_on||"", src:r.source||"", created:r.created_at, lbs:r.lb_slug||""
 });
 
 async function fetchLogs(userId){
@@ -630,7 +631,7 @@ async function placeEntries(entries, progress){
     if(!d){ unmatched.push(e); return; }
     const s = setBy.get(d.tmdb);
     if(!s){ unplaced.push(Object.assign({}, e, {tmdb:d.tmdb, poster:d.poster})); return; }
-    ready.push(Object.assign({t:e.t, y:e.y || d.y, d:d.d, tmdb:d.tmdb, poster:d.poster, r:e.r || null, rv:e.rv ? 1 : 0, watched:/^\d{4}-\d{2}-\d{2}$/.test(e.watched||"") ? e.watched : ""}, s));
+    ready.push(Object.assign({t:e.t, y:e.y || d.y, d:d.d, tmdb:d.tmdb, poster:d.poster, r:e.r || null, rv:e.rv ? 1 : 0, watched:/^\d{4}-\d{2}-\d{2}$/.test(e.watched||"") ? e.watched : "", lbs:e.slug || ""}, s));
   });
   return {ready, unmatched, unplaced};
 }
@@ -650,17 +651,19 @@ async function lbInvoke(body){
 // Recent diary entries: exact TMDB ids and watch dates.
 async function fetchLetterboxdFeed(username){
   const d = await lbInvoke({username});
-  return (d.films || []).map(f=>({t:f.title, y:f.year || "", r:f.rating || null, watched:f.watched || "", tmdb:f.tmdb}));
+  return (d.films || []).map(f=>({t:f.title, y:f.year || "", r:f.rating || null, watched:f.watched || "", tmdb:f.tmdb, slug:f.slug || undefined}));
 }
 // Every film on the member's Films page (all pages), including ones never logged in the diary.
+// all.complete is true only when every page was read, which is what removals rely on.
 async function fetchLetterboxdFilms(username, maxPages, onPage){
   const all = [];
+  all.complete = false;
   for(let page=1; page<=maxPages; page++){
     const d = await lbInvoke({username, mode:"films", page});
     if(d.films && d.films.length && d.films[0].slug === undefined) throw new Error("old_function");   // the deployed function predates list support
     all.push(...(d.films || []).map(f=>({t:f.title, y:f.year || "", r:f.rating || null, slug:f.slug})));
     onPage && onPage(page, all.length);
-    if(!d.more) break;
+    if(!d.more){ all.complete = true; break; }
   }
   return all;
 }
@@ -701,7 +704,7 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
     feed.forEach(e=>{ const k = MM.filmKey(e); if(!merged.has(k)) merged.set(k, e); });
     list.forEach(e=>{
       const k = e.y ? MM.filmKey(e) : "slug:" + e.slug;   // no year yet: keep apart until its film page fills it in
-      if(merged.has(k)){ const m = merged.get(k); if(m.r == null && e.r) m.r = e.r; m.slug = m.slug || e.slug; }
+      if(merged.has(k)){ const m = merged.get(k); if(e.r != null) m.r = e.r; m.slug = m.slug || e.slug; }
       else merged.set(k, e);
     });
     const all = [...merged.values()];
@@ -731,17 +734,61 @@ async function syncLetterboxd({quiet=false, full=false, progress=null} = {}){
     [...prev.missed, ...missed].forEach(m=>{ if(!(m.tmdb && nowIds.has(m.tmdb)) && !nowKeys.has(MM.filmKey(m))) byId.set(m.tmdb || MM.filmKey(m), {t:m.t, y:m.y, tmdb:m.tmdb||null, poster:m.poster||null}); });
     MM.lsSet(lbReportKey(), {total: full ? all.length : Math.max(prev.total||0, all.length), full: full || !!prev.full, missed:[...byId.values()]});
     MM.lsSet(lbSyncKey(), Date.now());
+    // With the complete films list in hand: copy rating changes over and drop films removed from Letterboxd.
+    let changes = {rated:0, removed:0, held:0};
+    if(full && list.complete && list.length) changes = await reconcileLetterboxd(list);
     linkLetterboxdFriends(quiet).catch(()=>{});
-    if(added && viewing.mine){ viewing.films = myFilms; renderAll(); fitPins(true); }
+    if((added || changes.rated || changes.removed) && viewing.mine){ viewing.films = myFilms; renderAll(); if(added || changes.removed) fitPins(true); }
+    if(changes.removed || changes.rated) toast([changes.removed ? `Removed ${changes.removed} film${changes.removed===1?"":"s"} you took off Letterboxd` : "", changes.rated ? `updated ${changes.rated} rating${changes.rated===1?"":"s"}` : ""].filter(Boolean).join(", ").replace(/^u/, "U"));
+    if(changes.held) toast(`${changes.held} films are missing from your Letterboxd list, which looks like a reading problem, so none were removed`);
     if(byId.size && (added || !quiet)) toast(`${added ? `Added ${added} from Letterboxd. ` : ""}${byId.size} need${byId.size===1?"s":""} a pin: see the Letterboxd tab`);
     else if(added) toast(`Added ${added} film${added===1?"":"s"} from Letterboxd`);
     else if(!quiet) toast("You're up to date with Letterboxd");
-    return {added, total:all.length};
+    return {added, total:all.length, rated:changes.rated, removed:changes.removed};
   }catch(e){
     if(!quiet) toast(LB_ERRORS[e.message] || "Sync didn't go through. Try again.");
     return {error:e.message};
   }finally{ syncing = false; }
 }
+// Keep the map in step with Letterboxd, given the complete list of films on the member's profile.
+// Each pin remembers which Letterboxd film it came from (its slug). Pins made before that was recorded
+// are linked up by title and year the first time. Films added by hand that aren't on Letterboxd are
+// never touched. If an unusually large share would disappear at once, nothing is removed, since that's
+// more likely a reading problem than a real clear-out.
+const lbSlugify = t => String(t||"").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/&/g, "").replace(/['’.]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+async function reconcileLetterboxd(list){
+  const bySlug = new Map(list.map(e=>[e.slug, e]));
+  const byKey = new Map(list.filter(e=>e.y).map(e=>[MM.filmKey(e), e]));
+  const out = {rated:0, removed:0, held:0};
+  // 1. link older pins to their Letterboxd film
+  const claimed = new Set(myFilms.filter(f=>f.lbs).map(f=>f.lbs));
+  for(const f of myFilms){
+    if(f.lbs || !f.id) continue;
+    const e = byKey.get(MM.filmKey(f)) || bySlug.get(lbSlugify(f.t) + (f.y ? "-" + f.y : "")) || bySlug.get(lbSlugify(f.t));
+    if(!e || claimed.has(e.slug)) continue;
+    const {error} = await sb.from("logs").update({lb_slug:e.slug}).eq("id", f.id);
+    if(!error){ f.lbs = e.slug; claimed.add(e.slug); }
+  }
+  // 2. ratings follow Letterboxd (including a rating being cleared)
+  for(const f of myFilms){
+    const e = f.lbs && bySlug.get(f.lbs); if(!e || !f.id) continue;
+    const want = e.r != null ? +e.r : null, have = f.r != null ? +f.r : null;
+    if(want === have) continue;
+    const {error} = await sb.from("logs").update({rating:want}).eq("id", f.id);
+    if(!error){ f.r = want; out.rated++; }
+  }
+  // 3. films no longer on Letterboxd come off the map
+  const linked = myFilms.filter(f=>f.lbs && f.id), gone = linked.filter(f=>!bySlug.has(f.lbs));
+  if(gone.length > Math.max(5, linked.length * 0.3)){ out.held = gone.length; return out; }
+  for(let i=0; i<gone.length; i+=100){
+    const part = gone.slice(i, i+100);
+    const {error} = await sb.from("logs").delete().in("id", part.map(f=>f.id));
+    if(!error){ const ids = new Set(part.map(f=>f.id)); myFilms = myFilms.filter(f=>!ids.has(f.id)); out.removed += part.length; }
+  }
+  if(out.removed && viewing.mine) viewing.films = myFilms;
+  return out;
+}
+
 // Friends mirror Letterboxd: anyone you follow there who has a MovieMap account (with that Letterboxd
 // profile linked) is followed here, and unfollowed here when you unfollow them there. Follows you make
 // by hand on MovieMap are never touched, and unfollowing a Letterboxd friend here sticks until you

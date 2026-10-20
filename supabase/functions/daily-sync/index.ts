@@ -35,35 +35,44 @@ const decode = (s: string) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) =>
 const tag = (s: string, t: string) => { const m = s.match(new RegExp(`<${t}>([\\s\\S]*?)</${t}>`)); return m ? decode(m[1].replace(/^\s*<!\[CDATA\[/, "").replace(/\]\]>\s*$/, "")).trim() : ""; };
 const attr = (s: string, n: string) => { const m = s.match(new RegExp(`\\s${n}="([^"]*)"`)); return m ? decode(m[1]).trim() : ""; };
 
-type Entry = { title: string; year: number | null; rating: number | null; watched: string | null; tmdb: number | null };
+type Entry = { title: string; year: number | null; rating: number | null; watched: string | null; tmdb: number | null; slug: string | null };
 
-async function letterboxd(username: string): Promise<Entry[]> {
-  const out: Entry[] = [];
+// The diary feed (exact TMDB ids and watch dates) plus every page of the Films grid (every watched film,
+// with ratings). complete is true only when every grid page was read, which removals depend on.
+async function letterboxd(username: string, deadline: number): Promise<{ entries: Entry[]; grid: Entry[]; complete: boolean }> {
+  const entries: Entry[] = [], grid: Entry[] = [];
   const rss = await fetch(`https://letterboxd.com/${username}/rss/`, { headers: UA });
   if (rss.ok) {
     for (const m of (await rss.text()).matchAll(/<item>([\s\S]*?)<\/item>/g)) {
       const s = m[1];
       const tmdb = Number(tag(s, "tmdb:movieId")) || -Number(tag(s, "tmdb:tvId")) || null;
       const title = tag(s, "letterboxd:filmTitle");
-      if (title && tmdb) out.push({ title, year: Number(tag(s, "letterboxd:filmYear")) || null, rating: Number(tag(s, "letterboxd:memberRating")) || null, watched: tag(s, "letterboxd:watchedDate") || null, tmdb });
+      const slug = (tag(s, "link").match(/\/film\/([a-z0-9-]+)\//) ?? [])[1] ?? null;
+      if (title && tmdb) entries.push({ title, year: Number(tag(s, "letterboxd:filmYear")) || null, rating: Number(tag(s, "letterboxd:memberRating")) || null, watched: tag(s, "letterboxd:watchedDate") || null, tmdb, slug });
     }
   }
-  // Newest page of the Films grid too, for films marked watched without a diary entry.
-  const page = await fetch(`https://letterboxd.com/${username}/films/`, { headers: UA });
-  if (page.ok) {
-    const html = await page.text();
+  let complete = false;
+  for (let page = 1; page <= 100 && Date.now() < deadline; page++) {
+    const r = await fetch(`https://letterboxd.com/${username}/films/${page > 1 ? `page/${page}/` : ""}`, { headers: UA });
+    if (!r.ok) break;
+    const html = await r.text();
     const starts = [...html.matchAll(/<[a-z]+\b[^>]*\bdata-(?:film|item)-slug="[^"]+"[^>]*>/g)];
     starts.forEach((m, i) => {
       const open = m[0], chunk = html.slice(m.index!, i + 1 < starts.length ? starts[i + 1].index! : m.index! + 4000);
+      const slug = attr(open, "data-film-slug") || attr(open, "data-item-slug");
+      if (!slug || grid.some((g) => g.slug === slug)) return;
       const disp = attr(open, "data-item-full-display-name") || attr(open, "data-item-name");
       const dm = disp.match(/^(.*?)\s*\((\d{4})\)\s*$/);
       const title = attr(open, "data-film-name") || (dm ? dm[1] : disp);
       const year = Number(attr(open, "data-film-release-year")) || (dm ? Number(dm[2]) : null);
       const rm = chunk.match(/\brated-(\d{1,2})\b/);
-      if (title) out.push({ title, year, rating: rm ? Number(rm[1]) / 2 : null, watched: null, tmdb: null });
+      if (title) grid.push({ title, year, rating: rm ? Number(rm[1]) / 2 : null, watched: null, tmdb: null, slug });
     });
+    const more = starts.length > 0 && (new RegExp(`/${username}/films/page/${page + 1}/`, "i").test(html) || /class="next"/.test(html));
+    if (!more) { complete = page > 1 || starts.length > 0 || /no films/i.test(html); break; }
+    await sleep(200);
   }
-  return out;
+  return { entries, grid, complete };
 }
 
 // ---------- TMDB ----------
@@ -255,16 +264,27 @@ async function syncFriends(p: { id: string; letterboxd: string; lb_seen?: string
 }
 
 // ---------- one member ----------
+const slugify = (t: string) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/&/g, "").replace(/['’.]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+type Log = { id: number; title: string; year: number | null; tmdb_id: number | null; rating: number | null; lb_slug: string | null };
+
 async function syncMember(p: { id: string; letterboxd: string }, deadline: number) {
-  const entries = await letterboxd(p.letterboxd);
-  const have: { title: string; year: number | null; tmdb_id: number | null }[] = await db(`logs?user_id=eq.${p.id}&select=title,year,tmdb_id&limit=10000`) ?? [];
+  const { entries, grid, complete } = await letterboxd(p.letterboxd, deadline);
+  const gridBySlug = new Map(grid.map((g) => [g.slug!, g]));
+  const gridByKey = new Map(grid.filter((g) => g.year).map((g) => [norm(g.title) + "|" + g.year, g]));
+  // Diary entries first (exact ids), then the rest of the grid; grid ratings are the current ones.
+  const todo: Entry[] = [];
+  entries.forEach((e) => { const g = (e.slug && gridBySlug.get(e.slug)) || gridByKey.get(norm(e.title) + "|" + (e.year ?? "")); todo.push({ ...e, slug: e.slug ?? g?.slug ?? null, rating: g ? g.rating : e.rating }); });
+  grid.forEach((g) => { if (!todo.some((t) => t.slug === g.slug)) todo.push(g); });
+
+  let have: Log[] = await db(`logs?user_id=eq.${p.id}&select=id,title,year,tmdb_id,rating,lb_slug&limit=10000`) ?? [];
   const ids = new Set(have.map((h) => h.tmdb_id).filter(Boolean)), keys = new Set(have.map((h) => norm(h.title) + "|" + (h.year ?? "")));
+  const slugs = new Set(have.map((h) => h.lb_slug).filter(Boolean));
   const seen = new Set<string>();
   let added = 0;
-  for (const e of entries) {
+  for (const e of todo) {
     if (Date.now() > deadline) break;
     const k = norm(e.title) + "|" + (e.year ?? "");
-    if (seen.has(e.tmdb ? "t" + e.tmdb : k) || keys.has(k) || (e.tmdb && ids.has(e.tmdb))) continue;
+    if ((e.slug && slugs.has(e.slug)) || seen.has(e.tmdb ? "t" + e.tmdb : k) || keys.has(k) || (e.tmdb && ids.has(e.tmdb))) continue;
     seen.add(e.tmdb ? "t" + e.tmdb : k);
     const id = e.tmdb ?? await match(e.title, e.year);
     if (!id || ids.has(id)) continue;
@@ -274,11 +294,37 @@ async function syncMember(p: { id: string; letterboxd: string }, deadline: numbe
       method: "POST", headers: { Prefer: "resolution=ignore-duplicates" },
       body: JSON.stringify({ user_id: p.id, title: e.title, year: e.year ?? d.year, director: d.director || null, tmdb_id: d.id, poster_path: d.poster,
         place: s.place, country: s.country, continent: s.continent, lat: +s.lat.toFixed(3), lon: +s.lon.toFixed(3), approx: s.approx,
-        note: s.note ? s.note.slice(0, 500) : null, rating: e.rating && e.rating >= 0.5 ? e.rating : null, watched_on: e.watched, source: s.source }),
+        note: s.note ? s.note.slice(0, 500) : null, rating: e.rating && e.rating >= 0.5 ? e.rating : null, watched_on: e.watched, source: s.source, lb_slug: e.slug }),
     });
-    ids.add(d.id); keys.add(k); added++;
+    ids.add(d.id); keys.add(k); if (e.slug) slugs.add(e.slug); added++;
   }
-  return added;
+  // With the complete list: link older pins, copy ratings over, and remove films taken off Letterboxd.
+  const out = { added, rated: 0, removed: 0, held: 0 };
+  if (!complete || !grid.length || Date.now() > deadline) return out;
+  have = await db(`logs?user_id=eq.${p.id}&select=id,title,year,tmdb_id,rating,lb_slug&limit=10000`) ?? [];
+  const claimed = new Set(have.map((h) => h.lb_slug).filter(Boolean));
+  for (const h of have) {
+    if (h.lb_slug) continue;
+    const g = gridByKey.get(norm(h.title) + "|" + (h.year ?? "")) || gridBySlug.get(slugify(h.title) + (h.year ? "-" + h.year : "")) || gridBySlug.get(slugify(h.title));
+    if (!g || claimed.has(g.slug)) continue;
+    await db(`logs?id=eq.${h.id}`, { method: "PATCH", body: JSON.stringify({ lb_slug: g.slug }) });
+    h.lb_slug = g.slug; claimed.add(g.slug);
+  }
+  for (const h of have) {
+    const g = h.lb_slug ? gridBySlug.get(h.lb_slug) : null; if (!g) continue;
+    const want = g.rating != null ? g.rating : null, now = h.rating != null ? Number(h.rating) : null;
+    if (want === now) continue;
+    await db(`logs?id=eq.${h.id}`, { method: "PATCH", body: JSON.stringify({ rating: want }) });
+    out.rated++;
+  }
+  const linked = have.filter((h) => h.lb_slug), gone = linked.filter((h) => !gridBySlug.has(h.lb_slug!));
+  // A sudden large disappearance is more likely a reading problem than a real clear-out: hold off.
+  if (gone.length > Math.max(5, linked.length * 0.3)) { out.held = gone.length; return out; }
+  for (let i = 0; i < gone.length; i += 100) {
+    await db(`logs?id=in.(${gone.slice(i, i + 100).map((h) => h.id).join(",")})`, { method: "DELETE" });
+    out.removed += Math.min(100, gone.length - i);
+  }
+  return out;
 }
 
 Deno.serve(async (req) => {
@@ -288,7 +334,7 @@ Deno.serve(async (req) => {
   const q = (cols: string) => db(`profiles?letterboxd=not.is.null&or=(last_synced.is.null,last_synced.lt.${due})&select=${cols}&order=last_synced.asc.nullsfirst&limit=50`);
   // lb_seen arrives with migration 005; work without it until then.
   const members: { id: string; letterboxd: string; lb_seen?: string[] }[] = await q("id,letterboxd,lb_seen").catch(() => q("id,letterboxd")) ?? [];
-  const report: Record<string, number | string> = {};
+  const report: Record<string, unknown> = {};
   for (const m of members) {
     if (Date.now() > deadline) break;
     try { report[m.letterboxd] = await syncMember(m, deadline); }

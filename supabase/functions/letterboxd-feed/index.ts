@@ -59,6 +59,8 @@ async function feed(username: string) {
       watched: tag(s, "letterboxd:watchedDate") || null,
       // Series are sent as a negative TMDB id so they never collide with film ids.
       tmdb: Number(tag(s, "tmdb:movieId")) || -Number(tag(s, "tmdb:tvId")) || null,
+      // the film's Letterboxd id, from the entry link (…/username/film/<slug>/ or …/<slug>/2/ for rewatches)
+      slug: (tag(s, "link").match(/\/film\/([a-z0-9-]+)\//) ?? [])[1] ?? null,
     }))
     .filter((f) => f.title && f.tmdb); // drops list posts
   return json({ username, films });

@@ -41,7 +41,9 @@ Without this step the site still works, but films save only in each visitor's br
 
 7. **Letterboxd friends**: run `supabase/migrations/005_letterboxd_friends.sql`, then redeploy `letterboxd-feed` and `daily-sync` with the latest code. Anyone a member follows on Letterboxd who has a MovieMap account is then followed on MovieMap too, and unfollowed when they're unfollowed on Letterboxd. Follows made by hand on MovieMap are never touched.
 
-8. **AI settings**: run `supabase/migrations/002_ai_settings.sql` in the SQL Editor. Create an API key at [console.anthropic.com](https://console.anthropic.com/) (add a payment method; it costs well under a cent per title). In **Edge Functions → Secrets**, add `ANTHROPIC_API_KEY`. Then deploy `supabase/functions/film-setting/index.ts` as a new function named `film-setting`, with "Verify JWT" on.
+8. **Letterboxd ratings and removals**: run `supabase/migrations/006_letterboxd_links.sql`, then redeploy `letterboxd-feed` and `daily-sync`. Each pin then remembers which Letterboxd film it came from, so rating changes are copied over and films removed from Letterboxd come off the map.
+
+9. **AI settings**: run `supabase/migrations/002_ai_settings.sql` in the SQL Editor. Create an API key at [console.anthropic.com](https://console.anthropic.com/) (add a payment method; it costs well under a cent per title). In **Edge Functions → Secrets**, add `ANTHROPIC_API_KEY`. Then deploy `supabase/functions/film-setting/index.ts` as a new function named `film-setting`, with "Verify JWT" on.
 
 5. **Letterboxd sync**: **Edge Functions → Deploy a new function → Via editor**. Name it `letterboxd-feed`, replace the sample code with `supabase/functions/letterboxd-feed/index.ts`, and press **Deploy**. Leave "Verify JWT" on, so only signed-in members can use it.
 
