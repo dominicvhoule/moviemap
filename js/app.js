@@ -300,6 +300,7 @@ function unwrapFeature(f){
   return {type:"Feature", properties:f.properties, geometry};
 }
 function drawBase(){ if(!map) initMap(); else map.resize(); }
+MM.debugMap = () => map;   // for checking the map from the browser console
 $("#zin").onclick = ()=>map && map.zoomIn();
 $("#zout").onclick = ()=>map && map.zoomOut();
 $("#zfit").onclick = ()=>fitPins(true);
