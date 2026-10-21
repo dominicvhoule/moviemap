@@ -184,10 +184,10 @@ function initMap(){
 // One label point per country (on its largest landmass), with the short name used on the map.
 const SHORT_NAMES = {"United States of America":"United States","Dem. Rep. Congo":"DR Congo","Bosnia and Herz.":"Bosnia","S. Sudan":"South Sudan","Falkland Is.":"Falklands","W. Sahara":"W. Sahara","Central African Rep.":"Central African Rep.","Dominican Rep.":"Dominican Rep.","Eq. Guinea":"Eq. Guinea","Solomon Is.":"Solomon Is."};
 let countryPointsCache = null;
-// Up to 40 spots inside a country (deepest first), each with how much land runs across and up from it.
+// Up to 150 spots inside a country (deepest first), each with how much land runs across and up from it.
 function labelSpots(p){
   if(p.spots) return p.spots;
-  p.spots = deepestPoint(p.part).slice(0, 40).map(s=>{ const [w, h] = landRun(p.part, s.c); return {c:s.c, w, h}; });
+  p.spots = deepestPoint(p.part).slice(0, 150).map(s=>{ const [w, h] = landRun(p.part, s.c); return {c:s.c, w, h}; });
   return p.spots;
 }
 // How much land runs across (west-east) and up (south-north) through a point, in degrees, so we can
