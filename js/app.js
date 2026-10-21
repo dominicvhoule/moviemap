@@ -229,6 +229,9 @@ function countryPoints(){
     const g = f.geometry; if(!g) return null;
     let part = g;
     if(g.type === "MultiPolygon"){ let best = -1; g.coordinates.forEach(c=>{ const p = {type:"Polygon", coordinates:c}, a = d3.geoArea(p); if(a > best){ best = a; part = p; } }); }
+    // Shapes that cross the date line (Russia's far east) get continuous longitudes, so the label
+    // search below sees one piece of land rather than two halves at opposite edges of the map.
+    if(part && part.type === "Polygon"){ const xs = part.coordinates[0].map(p=>p[0]); if(Math.max(...xs) - Math.min(...xs) > 180) part = {type:"Polygon", coordinates:part.coordinates.map(unwrapRing)}; }
     const name = f.properties.name;
     // Candidate spots are worked out the first time the country needs a label (see labelSpots).
     return {type:"Feature", part, properties:{name, label:SHORT_NAMES[name] || name, rank:-Math.round(d3.geoArea(part) * 1e4)}, geometry:{type:"Point", coordinates:d3.geoCentroid(part)}};
