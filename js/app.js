@@ -377,6 +377,12 @@ function renderPins(){
   // doesn't touch a pin wins. No spot, no name (it appears as you zoom in).
   const viewW = map.getContainer().clientWidth, viewH = map.getContainer().clientHeight;
   const pinBoxes = groups.map(g=>{ const p = map.project([g.lon, g.lat]), r = (g.films.length > 1 ? 15 : 13) + 3; return [p.x - r, p.y - r, p.x + r, p.y + r]; });
+  // The boxes floating over the map (whose map, the Map/List/Stats switch, zoom, legend, credit) count as taken too.
+  const mr = map.getContainer().getBoundingClientRect();
+  document.querySelectorAll(".mapwrap .whose, .mapwrap .mapside, .mapwrap .legend, .maplibregl-ctrl-bottom-right").forEach(o=>{
+    const r = o.getBoundingClientRect(); if(!r.width) return;
+    pinBoxes.push([r.left - mr.left - 4, r.top - mr.top - 4, r.right - mr.left + 4, r.bottom - mr.top + 4]);
+  });
   const placed = [];
   for(const p of (countryPointsCache || [])){
     const q = p.properties; if(!set.has(q.name)) continue;
