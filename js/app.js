@@ -164,7 +164,7 @@ function initMap(){
     const fold = () => { const at = map.getContainer().querySelector(".maplibregl-ctrl-attrib"); if(at) at.classList.remove("maplibregl-compact-show"); };
     fold(); map.once("load", fold); map.once("idle", fold);
   });
-  map.on("zoomend", ()=>renderPins());
+  map.on("moveend", ()=>renderPins());   // after zooming or panning: regroup pins, re-place names
   map.on("click", ev=>{
     if(!picking){
       if(ev.originalEvent && ev.originalEvent.target.closest && ev.originalEvent.target.closest(".gpin")) return;   // that was a pin
@@ -375,6 +375,7 @@ function renderPins(){
   const set = new Set(visited);
   // Try each country's spots, deepest first: the first where the name fits inside the land and
   // doesn't touch a pin wins. No spot, no name (it appears as you zoom in).
+  const viewW = map.getContainer().clientWidth, viewH = map.getContainer().clientHeight;
   const pinBoxes = groups.map(g=>{ const p = map.project([g.lon, g.lat]), r = (g.films.length > 1 ? 15 : 13) + 3; return [p.x - r, p.y - r, p.x + r, p.y + r]; });
   const placed = [];
   for(const p of (countryPointsCache || [])){
@@ -384,6 +385,7 @@ function renderPins(){
       const lat = spot.c[1] * Math.PI / 180;
       if(z < 5 && (textW > spot.w * pxPerDeg * 0.92 || textH * 1.25 > spot.h * pxPerDeg / Math.cos(lat))) continue;
       const sp = map.project(spot.c), box = [sp.x - textW/2, sp.y - textH/2, sp.x + textW/2, sp.y + textH/2];
+      if(box[0] < 4 || box[1] < 4 || box[2] > viewW - 4 || box[3] > viewH - 4) continue;   // keep to the part of the country you can see
       if(pinBoxes.some(b=>!(box[2] < b[0] || box[0] > b[2] || box[3] < b[1] || box[1] > b[3]))) continue;
       placed.push({type:"Feature", properties:q, geometry:{type:"Point", coordinates:spot.c}});
       break;
