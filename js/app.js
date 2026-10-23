@@ -142,6 +142,10 @@ function initMap(){
     map.addLayer({id:"mm-visited", type:"fill", source:"mm-countries",
       paint:{"fill-color":SW.visited, "fill-opacity":["interpolate", ["linear"], ["zoom"], 3.5, 1, 6, 0.4]},
       filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
+    // A thin ink outline around them, as in a printed poster; it fades out as you zoom in.
+    map.addLayer({id:"mm-visited-line", type:"line", source:"mm-countries",
+      paint:{"line-color":SW.ink, "line-width":["interpolate", ["linear"], ["zoom"], 1, 0.6, 4, 1.2], "line-opacity":["interpolate", ["linear"], ["zoom"], 4, 0.9, 6, 0]},
+      filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
     countryPoints();
     map.addSource("mm-country-points", {type:"geojson", data:{type:"FeatureCollection", features:[]}});
     // Their names: dark ink on the tan, moving to a free side of their spot when a pin is in the way.
@@ -239,11 +243,8 @@ function countryPoints(){
 // Repaint the OpenFreeMap "liberty" style in the MovieMap palette, in English, without the clutter.
 let countryLabelLayers = [];
 const NAME_EN = ["coalesce", ["get","name:en"], ["get","name_en"], ["get","name:latin"], ["get","name"]];
-// The original MovieMap field-map palette: cream land, blue-grey sea, tan for countries with films.
-const DARK = !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
-const SW = DARK
-  ? {land:"#26323A", water:"#0F1E27", road:"#33414A", casing:"#3B4A53", building:"#2E3B43", border:"#3E4D55", rail:"#3B4A53", ink:"#E7EBE6", muted:"#9AA7AE", waterText:"#7FB2CB", visited:"#4A4530"}
-  : {land:"#F4F2EA", water:"#C9D8DD", road:"#FFFFFF", casing:"#E2DED0", building:"#E8E4D8", border:"#A9B5AE", rail:"#D6D2C4", ink:"#1C2733", muted:"#5D6A72", waterText:"#3E7590", visited:"#F0DDB3"};
+// The Drive-In palette: white land, pale green sea, yellow countries with films, pine-green ink.
+const SW = {land:"#FFFFFF", water:"#D9E6DF", road:"#EEF3F0", casing:"#DCE6E0", building:"#EEF3F0", border:"#B9CDC3", rail:"#DCE6E0", ink:"#0E3B2C", muted:"#3F6457", waterText:"#1F6B52", visited:"#FFC93C"};
 function mapStyle(){
   const set = (id, k, v) => { try{ map.setPaintProperty(id, k, v); }catch(e){} };
   const hide = id => { try{ map.setLayoutProperty(id, "visibility", "none"); }catch(e){} };
@@ -371,6 +372,7 @@ function renderPins(){
   })});
   const visited = [...new Set(viewing.films.map(f=>MM.geoName(f.c)))];
   if(map.getLayer("mm-visited")) map.setFilter("mm-visited", ["in", ["get","name"], ["literal", visited]]);
+  if(map.getLayer("mm-visited-line")) map.setFilter("mm-visited-line", ["in", ["get","name"], ["literal", visited]]);
   // A name is only written where it fits inside its country at this zoom, like a printed map;
   // smaller countries get theirs as you zoom in.
   const z = map.getZoom(), pxPerDeg = 512 * Math.pow(2, z) / 360;
