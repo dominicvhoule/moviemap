@@ -1365,7 +1365,7 @@ async function downloadPoster(kind){
 /* ---------- people ---------- */
 async function renderExplore(){
   const el = $("#explore");
-  const starter = `<a class="ucard" href="#/u/${FEATURED.username}"><span class="avatar" style="background:${MM.avatarColor(FEATURED.username)}">${FEATURED.name[0]}</span><span style="min-width:0"><b>${esc(FEATURED.name)}</b><span class="m">Starter map · ${FEATURED.synced ? "synced from Letterboxd" : "hand-checked settings"}</span></span><em><b>${FEATURED.films.length}</b><br>films</em></a>`;
+  const starter = `<a class="ucard" href="#/u/${FEATURED.username}"><span class="avatar" style="background:${MM.avatarColor(FEATURED.username)}">${FEATURED.name[0]}</span><span style="min-width:0"><b>${esc(FEATURED.name)}</b><span class="m">Starter map · ${FEATURED.synced ? "synced from Letterboxd" : "hand-picked, every continent"}</span></span><em><b>${FEATURED.films.length}</b><br>films</em></a>`;
   if(!sb){
     el.innerHTML = `<h2 class="h">People</h2><p class="hint">Accounts aren't switched on for this site yet, so there's one map to explore.</p><div class="list">${starter}</div>`;
     return;
@@ -1526,7 +1526,7 @@ async function route(){
       const {data:p} = await sb.from("profiles").select("*").eq("username", name).maybeSingle();
       if(p){ const films = await fetchLogs(p.id).catch(()=>[]); return showMap(p, films, false); }
     }
-    if(name === FEATURED.username || name === "henry" || name === "grant") return showMap(FEATURED, FEATURED.films, false);   // its old names still work
+    if(name === FEATURED.username || ["mattgoold","henry","grant"].includes(name)) return showMap(FEATURED, FEATURED.films, false);   // its old names still work
     showMap({name:"Not found", username:name, bio:"No one has this username."}, [], false);
     return;
   }
@@ -1538,10 +1538,10 @@ async function route(){
   if(a === "account"){ setNav("account"); showPanel("account"); if(!viewing.owner) showFeaturedOrMine(); return renderAccount(); }
   setNav("home"); showPanel("map"); showFeaturedOrMine();
 }
-// The starter map is @mattgoold's Letterboxd, kept in sync on the server (daily-sync → starter_logs).
+// The starter map is Jack's hand-picked logbook in js/featured.js. (A Letterboxd-synced starter in starter_logs is still supported: drop `handpicked`.)
 // Until it loads (or if it can't), the hand-checked list in featured.js stands in.
 async function loadStarter(){
-  if(!sb) return;
+  if(!sb || FEATURED.handpicked) return;          // a hand-picked starter map lives in js/featured.js
   try{
     const {data:info} = await sb.from("starters").select("*").eq("username", FEATURED.username).maybeSingle();
     const rows = [];
