@@ -461,21 +461,27 @@ async function openFilm(f, fly){
   renderPins(); markListSelection();
   const ids = new Set(myFilms.map(x=>x.tmdb).filter(Boolean)), keys = myKeys();
   const timeout = (p, ms) => Promise.race([p, new Promise(r=>setTimeout(()=>r(null), ms))]);
-  const [url, sim] = await Promise.all([
+  // A short "about" for every title: TMDB's synopsis, found by id or else by title and year.
+  const about = f.tmdb ? MM.filmDetails(f.tmdb).catch(()=>null)
+    : MM.matchFilm(f.t, f.y).then(m=>m ? MM.filmDetails(m.id) : null).catch(()=>null);
+  const [url, sim, det] = await Promise.all([
     f.poster ? MM.poster(f.poster) : timeout(MM.posterFor(f).catch(()=>null), 5000),
-    timeout(MM.similarFrom(f, MM.isoFor(f.c), m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))).catch(()=>null), 8000)
+    timeout(MM.similarFrom(f, MM.isoFor(f.c), m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))).catch(()=>null), 8000),
+    timeout(about, 6000)
   ]);
   if(token !== openToken || selected !== f) return;
+  const tmdbId = f.tmdb || (det && det.tmdb) || null;
   const mine = viewing.mine;
   const list = sim && sim.list || [];
   detail.innerHTML = `<div class="top">${posterSlot(f, url)}
     <div class="stub"><small>${esc(f.y)}${f.d ? " · " + esc(f.d) : ""}</small><h3>${esc(f.t)}</h3><button class="x" aria-label="Close">×</button></div></div>
     <div class="body">
+      ${det && det.ov ? `<p class="ov">${esc(det.ov)}</p>` : ""}
       <div><div class="place">${esc(placeLine(f))}</div><div class="coord">${fmtCoord(f.lat, f.lon)}</div></div>
       ${f.n ? `<p class="note">${esc(f.n)}</p>` : ""}
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${f.r ? `<span class="stars">${stars(f.r)}</span>` : ""}${f.rv ? '<span class="tag">Reviewed</span>' : ""}${isSeries(f) ? '<span class="tag tv">Series</span>' : ""}${f.ap ? '<span class="tag ap">Approx. setting</span>' : ""}${f.watched ? `<span class="tag" style="color:var(--muted)">Watched ${esc(f.watched)}</span>` : ""}</div>
       ${mine ? `<div class="cta"><button class="btn ghost small" id="d-move">Move pin</button><button class="btn ghost small" id="d-del">Remove</button></div>` : ""}
-      ${f.tmdb ? `<a class="linkbtn" href="${MM.tmdbPage(f.tmdb)}" target="_blank" rel="noopener">${MM.isTv(f.tmdb) ? "Series" : "Film"} page on TMDB ↗</a>` : ""}
+      ${tmdbId ? `<a class="linkbtn" href="${MM.tmdbPage(tmdbId)}" target="_blank" rel="noopener">${MM.isTv(tmdbId) ? "Series" : "Film"} page on TMDB ↗</a>` : ""}
       ${list.length ? `<div class="more"><div class="more-h"><b class="sub" style="font-size:15px">${esc(sim.heading)}</b><span class="hint">Scroll for more →</span></div>
         <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
         <p class="hint" style="font-size:12px;margin:0">Tap one to see where it's set, watch the trailer or find where to stream it.</p></div>` : ""}
