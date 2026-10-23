@@ -130,28 +130,26 @@ function initMap(){
   map = new maplibregl.Map({container:"map", style:MAP_STYLE, center:WORLD_VIEW.center, zoom:WORLD_VIEW.zoom,
     minZoom:0.8, maxZoom:17, attributionControl:false, dragRotate:false, pitchWithRotate:false, renderWorldCopies:true});
   map.touchZoomRotate.disableRotation();
-  map.getCanvasContainer().style.background = "#E6E6E6";
+  map.getCanvasContainer().style.background = SW.water;
   map.addControl(new maplibregl.AttributionControl({compact:true}), "bottom-right");
   // Restyle and pin as soon as the style arrives, without waiting for every tile to finish.
   map.once("style.load", ()=>{
-    swissStyle();
-    // Countries with a film: solid black with white names, as on the original MovieMap. Zoomed in to
-    // city level, the black fades so the streets show through and the map's own names take over.
+    mapStyle();
+    // Countries with a film: tan, as on the original MovieMap. Zoomed in to city level the tan
+    // thins out so the streets show through and the map's own names take over.
     const firstLabel = map.getStyle().layers.find(l=>l.type === "symbol");
     map.addSource("mm-countries", {type:"geojson", data:{type:"FeatureCollection", features:countries.map(unwrapFeature)}});
     map.addLayer({id:"mm-visited", type:"fill", source:"mm-countries",
-      paint:{"fill-color":"#111111", "fill-opacity":["interpolate", ["linear"], ["zoom"], 3.5, 1, 6, 0.14]},
+      paint:{"fill-color":SW.visited, "fill-opacity":["interpolate", ["linear"], ["zoom"], 3.5, 1, 6, 0.4]},
       filter:["in", ["get","name"], ["literal", []]]}, firstLabel && firstLabel.id);
     countryPoints();
     map.addSource("mm-country-points", {type:"geojson", data:{type:"FeatureCollection", features:[]}});
-    // Their names: white on black, moving to a free side of their spot when a pin is in the way,
-    // and turning black as the fill fades when you zoom in.
+    // Their names: dark ink on the tan, moving to a free side of their spot when a pin is in the way.
     map.addLayer({id:"mm-visited-labels", type:"symbol", source:"mm-country-points", maxzoom:7,
       layout:{"text-field":["get","label"], "text-font":["Noto Sans Bold"], "text-transform":"uppercase", "text-letter-spacing":0.08,
         "text-size":["interpolate", ["linear"], ["zoom"], 1, 9, 4, 13], "text-max-width":7, "symbol-sort-key":["get","rank"],
         "text-padding":2},
-      paint:{"text-color":["interpolate", ["linear"], ["zoom"], 4.5, "#FFFFFF", 5.5, "#111111"],
-        "text-halo-color":["interpolate", ["linear"], ["zoom"], 4.5, "rgba(17,17,17,0)", 5.5, "#E6E6E6"], "text-halo-width":1},
+      paint:{"text-color":SW.ink, "text-halo-color":SW.visited, "text-halo-width":1.2},
       filter:["in", ["get","name"], ["literal", []]]});
     // Invisible stand-ins for the pins, so the map's names keep clear of them instead of running under them.
     map.addImage("mm-block", {width:32, height:32, data:new Uint8Array(32 * 32 * 4)});
@@ -238,11 +236,15 @@ function countryPoints(){
   }).filter(Boolean);
   return countryPointsCache;
 }
-// Repaint the OpenFreeMap "liberty" style in black, white and grey, in English, without the clutter.
+// Repaint the OpenFreeMap "liberty" style in the MovieMap palette, in English, without the clutter.
 let countryLabelLayers = [];
 const NAME_EN = ["coalesce", ["get","name:en"], ["get","name_en"], ["get","name:latin"], ["get","name"]];
-const SW = {land:"#E6E6E6", water:"#FFFFFF", road:"#FFFFFF", casing:"#D2D2D2", building:"#D9D9D9", border:"#FFFFFF", ink:"#111111", muted:"#6E6E6E"};
-function swissStyle(){
+// The original MovieMap field-map palette: cream land, blue-grey sea, tan for countries with films.
+const DARK = !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches);
+const SW = DARK
+  ? {land:"#26323A", water:"#0F1E27", road:"#33414A", casing:"#3B4A53", building:"#2E3B43", border:"#3E4D55", rail:"#3B4A53", ink:"#E7EBE6", muted:"#9AA7AE", waterText:"#7FB2CB", visited:"#4A4530"}
+  : {land:"#F4F2EA", water:"#C9D8DD", road:"#FFFFFF", casing:"#E2DED0", building:"#E8E4D8", border:"#A9B5AE", rail:"#D6D2C4", ink:"#1C2733", muted:"#5D6A72", waterText:"#3E7590", visited:"#F0DDB3"};
+function mapStyle(){
   const set = (id, k, v) => { try{ map.setPaintProperty(id, k, v); }catch(e){} };
   const hide = id => { try{ map.setLayoutProperty(id, "visibility", "none"); }catch(e){} };
   for(const l of map.getStyle().layers){
@@ -256,9 +258,9 @@ function swissStyle(){
     }
     else if(t === "line"){
       if(/water|river|stream|canal/.test(id)) set(id, "line-color", SW.water);
-      else if(/boundary|admin/.test(id)){ set(id, "line-color", SW.border); set(id, "line-dasharray", [1]); }
+      else if(/boundary|admin/.test(id)){ set(id, "line-color", SW.border); set(id, "line-dasharray", [1]); set(id, "line-opacity", 0.9); }
       else if(/casing/.test(id)) set(id, "line-color", SW.casing);
-      else if(/rail|transit/.test(id)) set(id, "line-color", "#C4C4C4");
+      else if(/rail|transit/.test(id)) set(id, "line-color", SW.rail);
       else set(id, "line-color", SW.road);
     }
     else if(t === "symbol"){
@@ -274,7 +276,7 @@ function swissStyle(){
           set(id, "text-color", SW.muted); set(id, "text-halo-color", SW.land); set(id, "text-halo-width", 1);
           continue;
         }
-        set(id, "text-color", water ? "#9A9A9A" : /country|continent|state/.test(id) || /city|capital/.test(id) ? SW.ink : "#3A3A3A");
+        set(id, "text-color", water ? SW.waterText : /country|continent|state/.test(id) || /city|capital/.test(id) ? SW.ink : SW.muted);
         set(id, "text-halo-color", water ? SW.water : SW.land);
         set(id, "text-halo-width", 1.2);
         if(map.getLayoutProperty(id, "icon-image")) set(id, "icon-opacity", 0);   // keep the name, drop the town dot
@@ -1267,7 +1269,7 @@ function renderImport(){
 }
 
 /* ---------- poster ---------- */
-let posterOpts = Object.assign({theme:"swiss", size:"18x24", showKey:true}, MM.lsGet("mm-poster-v2", {}));
+let posterOpts = Object.assign({theme:"paper", size:"18x24", showKey:true}, MM.lsGet("mm-poster-v3", {}));
 let posterCanvas = null, posterURL = null, posterSeq = 0;
 function posterTitle(){
   const o = viewing.owner || {};
@@ -1309,7 +1311,7 @@ function renderPoster(){
 }
 async function drawPoster(){
   const seq = ++posterSeq;
-  MM.lsSet("mm-poster-v2", posterOpts);
+  MM.lsSet("mm-poster-v3", posterOpts);
   await MM.posterFontsReady();
   if(seq !== posterSeq) return;
   posterCanvas = MM.renderPoster({
