@@ -454,7 +454,7 @@ function openGroup(g){
 // The film card appears in one go: poster, details and suggestions together (a moment later, rather
 // than piece by piece). Opening another film meanwhile cancels this one.
 let openToken = 0;
-async function openFilm(f, fly){
+async function openFilm(f, fly, showMore){
   const token = ++openToken;
   selected = f; preview = null;
   if(fly) flyTo(f);
@@ -464,15 +464,13 @@ async function openFilm(f, fly){
   // A short "about" for every title: TMDB's synopsis, found by id or else by title and year.
   const about = f.tmdb ? MM.filmDetails(f.tmdb).catch(()=>null)
     : MM.matchFilm(f.t, f.y).then(m=>m ? MM.filmDetails(m.id) : null).catch(()=>null);
-  const [url, sim, det] = await Promise.all([
+  const [url, det] = await Promise.all([
     f.poster ? MM.poster(f.poster) : timeout(MM.posterFor(f).catch(()=>null), 5000),
-    timeout(MM.similarFrom(f, MM.isoFor(f.c), m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))).catch(()=>null), 8000),
     timeout(about, 6000)
   ]);
   if(token !== openToken || selected !== f) return;
   const tmdbId = f.tmdb || (det && det.tmdb) || null;
   const mine = viewing.mine;
-  const list = sim && sim.list || [];
   detail.innerHTML = `<div class="top">${posterSlot(f, url)}
     <div class="stub"><small>${esc(f.y)}${f.d ? " · " + esc(f.d) : ""}</small><h3>${esc(f.t)}</h3><button class="x" aria-label="Close">×</button></div></div>
     <div class="body">
@@ -482,14 +480,26 @@ async function openFilm(f, fly){
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">${f.r ? `<span class="stars">${stars(f.r)}</span>` : ""}${f.rv ? '<span class="tag">Reviewed</span>' : ""}${isSeries(f) ? '<span class="tag tv">Series</span>' : ""}${f.ap ? '<span class="tag ap">Approx. setting</span>' : ""}${f.watched ? `<span class="tag" style="color:var(--muted)">Watched ${esc(f.watched)}</span>` : ""}</div>
       ${mine ? `<div class="cta"><button class="btn ghost small" id="d-move">Move pin</button><button class="btn ghost small" id="d-del">Remove</button></div>` : ""}
       ${tmdbId ? `<a class="linkbtn" href="${MM.tmdbPage(tmdbId)}" target="_blank" rel="noopener">${MM.isTv(tmdbId) ? "Series" : "Film"} page on TMDB ↗</a>` : ""}
-      ${list.length ? `<div class="more"><div class="more-h"><b class="sub" style="font-size:15px">${esc(sim.heading)}</b><span class="hint">Scroll for more →</span></div>
-        <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
-        <p class="hint" style="font-size:12px;margin:0">Tap one to see where it's set, watch the trailer or find where to stream it.</p></div>` : ""}
+      <div id="d-morebox"><button type="button" class="btn ghost" id="d-more">See more like this</button></div>
       ${tmdbCredit()}
     </div>`;
   detail.hidden = false; detail.scrollTop = 0;
   detail.querySelector(".x").onclick = closeDetail;
-  detail.querySelectorAll(".more button").forEach(b=>b.onclick = ()=>openPreview(list[+b.dataset.i], f));
+  // Similar titles only when asked for: one scrolling row under the button.
+  const moreBtn = $("#d-more");
+  moreBtn.onclick = async ()=>{
+    moreBtn.disabled = true; moreBtn.textContent = "Finding films like this…";
+    const sim = await timeout(MM.similarFrom(f, MM.isoFor(f.c), m=>ids.has(m.tmdb) || keys.has(MM.filmKey(m))).catch(()=>null), 12000);
+    if(token !== openToken || selected !== f) return;
+    const list = sim && sim.list || [];
+    const box = $("#d-morebox");
+    if(!list.length){ box.innerHTML = `<p class="hint" style="margin:0">Couldn't find similar titles right now.</p>`; return; }
+    box.innerHTML = `<div class="more"><div class="more-h"><b class="sub" style="font-size:15px">${esc(sim.heading)}</b><span class="hint">Scroll for more →</span></div>
+        <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
+        <p class="hint" style="font-size:12px;margin:0">Tap one to see where it's set, watch the trailer or find where to stream it.</p></div>`;
+    box.querySelectorAll(".more button").forEach(b=>b.onclick = ()=>openPreview(list[+b.dataset.i], f));
+  };
+  if(showMore) moreBtn.click();
   if(mine){
     detail.querySelector("#d-move").onclick = ()=>{ toast("Tap the map where it takes place"); startPicking(async pt=>{
       const moved = pt.country && pt.country !== f.c;
@@ -548,7 +558,7 @@ async function openPreview(m, from){
     </div>`;
   detail.hidden = false; detail.scrollTop = 0;
   detail.querySelector(".x").onclick = closeDetail;
-  const back = $("#pv-back"); if(back) back.onclick = ()=>{ preview = null; openFilm(from, true); };
+  const back = $("#pv-back"); if(back) back.onclick = ()=>{ preview = null; openFilm(from, true, true); };
   $("#pv-add").onclick = ()=>{ preview = null; pendingLog = {tmdb:m.tmdb, t:title, y:year}; location.hash = "#/log"; };
   const tb = $("#pv-trailer");
   if(tb) tb.onclick = ()=>{
