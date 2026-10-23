@@ -585,6 +585,7 @@ function setOwnerHeader(){
   $("#s-series").textContent = nSeries;
   $("#s-ctry").textContent = ctry.size;
   $("#s-cont").textContent = cont.size;
+  if(o.welcome){ $("#whose-k").textContent = "Welcome to"; $("#whose-h").textContent = "TheMovieMap"; return; }
   $("#whose-k").textContent = viewing.mine ? (me ? "Your map" : "Saved in this browser") : o.featured ? "Starter map" : "Member's map";
   $("#whose-h").textContent = viewing.mine ? (me ? (me.display_name || me.username) : "Your map") : name;
 }
@@ -800,7 +801,7 @@ async function renderStats(){
 
 /* ================= rail views ================= */
 function showPanel(id){
-  ["map","explore","log","import","account","poster","country"].forEach(v=>$("#view-"+v).hidden = v !== id);
+  ["map","explore","log","import","account","poster","country","welcome"].forEach(v=>$("#view-"+v).hidden = v !== id);
 }
 function setNav(name){ document.querySelectorAll(".nav a, .acct").forEach(a=>a.setAttribute("aria-current", a.dataset.nav === name ? "page" : "false")); }
 function paintAccountLink(){ $("#acct-link").textContent = me ? "@" + me.username : (sb ? "Sign in" : "Account"); }
@@ -1557,7 +1558,21 @@ async function route(){
   if(a === "poster" && !POSTERS){ location.replace("#/"); return; }
   if(a === "poster"){ setNav("poster"); showPanel("poster"); showFeaturedOrMine(); return renderPoster(); }   // always your own map (or the starter map before you have one)
   if(a === "account"){ setNav("account"); showPanel("account"); if(!viewing.owner) showFeaturedOrMine(); return renderAccount(); }
-  setNav("home"); showPanel("map"); showFeaturedOrMine();
+  setNav("home");
+  if(cloud() || myFilms.length){ showPanel("map"); return showMine(); }
+  showWelcome();
+}
+// First visit (signed out, nothing logged): invite them to make a map, with the starter map one tap away.
+function showWelcome(){
+  showPanel("welcome");
+  showMap({welcome:true, name:"TheMovieMap"}, [], false);
+  const n = FEATURED.films.length, nc = new Set(FEATURED.films.map(f=>f.c)).size;
+  $("#welcome").innerHTML = `<h2 class="h">See the world one film at a time</h2>
+    <p class="hint" style="margin:0;font-size:15px;color:var(--ink)">Log the films you watch and each one is pinned where its story is set. Your map fills in as you go, and friends can follow it.</p>
+    <div class="cta">${sb ? `<a class="btn" href="#/account">Create an account</a>` : `<a class="btn" href="#/log">Start your map</a>`}<a class="btn ghost" href="#/import">Bring in Letterboxd</a></div>
+    ${sb ? `<p class="hint" style="margin:0">Already have one? <a href="#/account">Sign in</a></p>` : ""}
+    <h3 class="sub" style="margin-top:14px">Or look around first</h3>
+    <div class="list"><a class="ucard" href="#/u/${FEATURED.username}"><span class="avatar" style="background:${MM.avatarColor(FEATURED.username)}">${esc(FEATURED.name[0])}</span><span style="min-width:0"><b>${esc(FEATURED.name)}</b><span class="m">Starter map · ${n} films from ${nc} countries</span></span><em><b>${n}</b><br>films</em></a></div>`;
 }
 // The starter map is Jack's hand-picked logbook in js/featured.js. (A Letterboxd-synced starter in starter_logs is still supported: drop `handpicked`.)
 // Until it loads (or if it can't), the hand-checked list in featured.js stands in.
