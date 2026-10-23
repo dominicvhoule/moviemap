@@ -1291,7 +1291,7 @@ function renderImport(){
 }
 
 /* ---------- poster ---------- */
-let posterOpts = Object.assign({theme:"paper", size:"18x24", showKey:true}, MM.lsGet("mm-poster-v3", {}));
+let posterOpts = Object.assign({theme:"drivein", size:"18x24", showKey:true}, MM.lsGet("mm-poster-v4", {}));
 let posterCanvas = null, posterURL = null, posterSeq = 0;
 function posterTitle(){
   const o = viewing.owner || {};
@@ -1334,7 +1334,7 @@ function renderPoster(){
 }
 async function drawPoster(){
   const seq = ++posterSeq;
-  MM.lsSet("mm-poster-v3", posterOpts);
+  MM.lsSet("mm-poster-v4", posterOpts);
   await MM.posterFontsReady();
   if(seq !== posterSeq) return;
   posterCanvas = MM.renderPoster({
