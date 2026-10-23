@@ -447,5 +447,5 @@ a{color:var(--sky)}
 .tmdb-credit a{flex:none;line-height:0}
 .tmdb-credit img{display:block;width:92px;height:auto}
 .tmdb-credit span{font-size:10.5px;line-height:1.35;color:var(--muted)}
-.credit-logo{display:inline-block;line-height:0;margin:4px 0 6px}
+.credit-logo{display:block;width:max-content;line-height:0;margin:2px 0 8px}
 .credit-logo img{display:block;width:110px;height:auto}
