@@ -370,7 +370,7 @@ function renderPins(){
     const px = (sel ? 34 : far ? (many ? 22 : 18) : (many ? 28 : 24)) + 4, s = px / 32;
     return {type:"Feature", properties:{s, o:[0, sel ? -21 / s : 0]}, geometry:{type:"Point", coordinates:[g.lon, g.lat]}};
   })});
-  const visited = [...new Set(viewing.films.map(f=>MM.geoName(f.c)))];
+  const visited = [...new Set(viewing.films.map(f=>MM.geoName(f.c)))].filter(n=>n !== "Antarctica");   // its pin shows, but a filled Antarctica swamps the map
   if(map.getLayer("mm-visited")) map.setFilter("mm-visited", ["in", ["get","name"], ["literal", visited]]);
   if(map.getLayer("mm-visited-line")) map.setFilter("mm-visited-line", ["in", ["get","name"], ["literal", visited]]);
   // A name is only written where it fits inside its country at this zoom, like a printed map;
@@ -620,7 +620,7 @@ async function renderCTA(){
   ov.hidden = true; cta.innerHTML = "";
   const o = viewing.owner || {};
   if(viewing.mine){
-    cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a>${POSTERS ? `<a class="btn ghost" href="#/poster">Poster</a>` : ""}${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
+    cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a>${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
     const sh = $("#share"); if(sh) sh.onclick = ()=>shareLink(profileURL(me.username), "My map on TheMovieMap");
     return;
   }
@@ -649,7 +649,6 @@ async function renderCTA(){
     };
     cta.prepend(b);
   }
-  if(POSTERS && viewing.films.length){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "#/poster"; a.textContent = "Poster"; cta.append(a); }
   if(o.letterboxd){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "https://letterboxd.com/" + encodeURIComponent(o.letterboxd) + "/"; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Letterboxd ↗"; cta.append(a); }
 }
 function renderAll(){ setOwnerHeader(); renderPins(); renderList(); renderCTA(); renderCountryList(); }
@@ -1310,6 +1309,7 @@ function renderPoster(){
   const seg = (name, items) => `<div class="seg" role="group" aria-label="${name}">${items}</div>`;
   el.innerHTML = `<h2 class="h">Poster</h2>
     <p class="hint">${esc(posterTitle())}, ready to print. Every place gets a number, with a key underneath.</p>
+    ${viewing.mine ? "" : `<p class="hint" style="margin:0">This is a sample made from ${esc(viewing.owner && viewing.owner.name || "the starter")}'s map. <a href="#/log">Log films</a> or <a href="#/import">link Letterboxd</a> and this page will make a poster of yours.</p>`}
     <div class="pv busy" id="pv">Drawing your poster…</div>
     <div class="opts">
       <div class="field">Style${seg("Style", Object.entries(MM.POSTER_THEMES).map(([k,t])=>`<button type="button" data-theme="${k}" aria-pressed="${posterOpts.theme===k}"><i style="background:${t.bg};box-shadow:inset -8px 0 0 ${t.pin}"></i>${t.label}</button>`).join(""))}</div>
@@ -1555,7 +1555,7 @@ async function route(){
   if(a === "log"){ setNav("log"); showPanel("log"); return renderLog(); }
   if(a === "import"){ setNav("import"); showPanel("import"); return renderImport(); }
   if(a === "poster" && !POSTERS){ location.replace("#/"); return; }
-  if(a === "poster"){ setNav(""); showPanel("poster"); if(!viewing.owner) showFeaturedOrMine(); return renderPoster(); }
+  if(a === "poster"){ setNav("poster"); showPanel("poster"); showFeaturedOrMine(); return renderPoster(); }   // always your own map (or the starter map before you have one)
   if(a === "account"){ setNav("account"); showPanel("account"); if(!viewing.owner) showFeaturedOrMine(); return renderAccount(); }
   setNav("home"); showPanel("map"); showFeaturedOrMine();
 }
