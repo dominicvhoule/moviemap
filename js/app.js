@@ -1,4 +1,4 @@
-// MovieMap app: routing, map, logbook, logging, Letterboxd import, accounts, people.
+// TheMovieMap app: routing, map, logbook, logging, Letterboxd import, accounts, people.
 (function(){
 const CFG = window.MOVIEMAP_CONFIG || {};
 const FEATURED = window.FEATURED;
@@ -135,7 +135,7 @@ function initMap(){
   // Restyle and pin as soon as the style arrives, without waiting for every tile to finish.
   map.once("style.load", ()=>{
     mapStyle();
-    // Countries with a film: tan, as on the original MovieMap. Zoomed in to city level the tan
+    // Countries with a film: yellow, in the site's palette. Zoomed in to city level the fill
     // thins out so the streets show through and the map's own names take over.
     const firstLabel = map.getStyle().layers.find(l=>l.type === "symbol");
     map.addSource("mm-countries", {type:"geojson", data:{type:"FeatureCollection", features:countries.map(unwrapFeature)}});
@@ -240,7 +240,7 @@ function countryPoints(){
   }).filter(Boolean);
   return countryPointsCache;
 }
-// Repaint the OpenFreeMap "liberty" style in the MovieMap palette, in English, without the clutter.
+// Repaint the OpenFreeMap "liberty" style in the site's palette, in English, without the clutter.
 let countryLabelLayers = [];
 const NAME_EN = ["coalesce", ["get","name:en"], ["get","name_en"], ["get","name:latin"], ["get","name"]];
 // The Drive-In palette: white land, pale green sea, yellow countries with films, pine-green ink.
@@ -600,7 +600,7 @@ async function renderCTA(){
   const o = viewing.owner || {};
   if(viewing.mine){
     cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a>${POSTERS ? `<a class="btn ghost" href="#/poster">Poster</a>` : ""}${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
-    const sh = $("#share"); if(sh) sh.onclick = ()=>shareLink(profileURL(me.username), "My MovieMap");
+    const sh = $("#share"); if(sh) sh.onclick = ()=>shareLink(profileURL(me.username), "My map on TheMovieMap");
     return;
   }
   if(o.featured && !cloud()){
@@ -1276,7 +1276,7 @@ let posterCanvas = null, posterURL = null, posterSeq = 0;
 function posterTitle(){
   const o = viewing.owner || {};
   const name = viewing.mine ? (me ? (me.display_name || me.username) : "My") : (o.display_name || o.name || o.username || "My");
-  return name === "My" ? "My MovieMap" : `${name}'s MovieMap`;
+  return name === "My" ? "My Map" : `${name}'s Map`;
 }
 function posterSubtitle(){
   const films = viewing.films, nS = films.filter(isSeries).length, nF = films.length - nS;
@@ -1341,7 +1341,7 @@ function loadJsPDF(){
 }
 async function downloadPoster(kind){
   if(!posterCanvas) return;
-  const name = "moviemap-" + (MM.norm(posterTitle().replace(/'s MovieMap$|MovieMap$/i,"")) || "poster");
+  const name = "themoviemap-" + (MM.norm(posterTitle().replace(/'s Map$|^My Map$/i,"")) || "poster");
   const btn = $(kind === "pdf" ? "#pdf" : "#png"); btn.disabled = true;
   try{
     let blob;
@@ -1375,11 +1375,11 @@ async function renderExplore(){
     <div class="list" id="pr"></div>
     ${cloud() ? `<div class="cta"><button class="btn ghost small" id="invite">Invite friends</button>${("contacts" in navigator && "ContactsManager" in window) ? `<button class="btn ghost small" id="fromcontacts">Find friends in contacts</button>` : ""}</div><div id="cres"></div>
       <h3 class="sub">Following</h3><div class="list" id="following"><p class="hint">Loading…</p></div>` : `<p class="notice"><a href="#/account">Sign in</a> to follow people and find friends from your contacts.</p>`}
-    <h3 class="sub">New on MovieMap</h3><div class="list" id="newest"><p class="hint">Loading…</p></div>
+    <h3 class="sub">New on TheMovieMap</h3><div class="list" id="newest"><p class="hint">Loading…</p></div>
     <h3 class="sub">Starter map</h3><div class="list">${starter}</div>`;
   let t; $("#pq").addEventListener("input", e=>{ clearTimeout(t); t = setTimeout(()=>searchPeople(e.target.value.trim()), 250); });
   if(cloud()){
-    $("#invite").onclick = ()=>shareLink(profileURL(me.username), "Follow my MovieMap");
+    $("#invite").onclick = ()=>shareLink(profileURL(me.username), "Follow my map on TheMovieMap");
     const fc = $("#fromcontacts"); if(fc) fc.onclick = findFromContacts;
     const {data} = await sb.from("follows").select("followee:profiles!follows_followee_fkey(id,username,display_name,logs(count))").eq("follower", me.id).limit(100);
     const fl = (data||[]).map(r=>r.followee).filter(Boolean);
@@ -1414,7 +1414,7 @@ async function findFromContacts(){
     const hashes = await Promise.all([...keys].slice(0,500).map(sha256));
     const {data, error} = await sb.rpc("find_by_contacts", {hashes});
     if(error) throw error;
-    out.innerHTML = data.length ? `<h3 class="sub">From your contacts</h3><div class="list">${data.map(personCard).join("")}</div>` : `<p class="hint">None of those contacts are on MovieMap yet, or they haven't turned on "Let friends find me". Try Invite friends.</p>`;
+    out.innerHTML = data.length ? `<h3 class="sub">From your contacts</h3><div class="list">${data.map(personCard).join("")}</div>` : `<p class="hint">None of those contacts are on TheMovieMap yet, or they haven't turned on "Let friends find me". Try Invite friends.</p>`;
   }catch(e){ out.innerHTML = `<p class="hint">Couldn't read your contacts.</p>`; }
 }
 async function shareLink(url, title){
@@ -1488,7 +1488,7 @@ function renderAccount(){
     </form>
     <p class="hint">Signed in as ${esc(session.user.email)}.</p>`;
   $("#p-out").onclick = async ()=>{ await sb.auth.signOut(); };
-  $("#p-share").onclick = ()=>shareLink(profileURL(p.username), "My MovieMap");
+  $("#p-share").onclick = ()=>shareLink(profileURL(p.username), "My map on TheMovieMap");
   $("#pf").onsubmit = async ev=>{
     ev.preventDefault();
     const e = $("#p-err"); e.hidden = true;

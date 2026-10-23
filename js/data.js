@@ -1,4 +1,4 @@
-// MovieMap data layer: TMDB lookups, Wikidata setting lookups, country helpers.
+// TheMovieMap data layer: TMDB lookups, Wikidata setting lookups, country helpers.
 (function(){
 const CFG = window.MOVIEMAP_CONFIG || {};
 const MM = window.MM = {};

@@ -1,4 +1,4 @@
-// MovieMap: find where a film or series is set by reading the places linked in its Wikipedia plot.
+// TheMovieMap: find where a film or series is set by reading the places linked in its Wikipedia plot.
 // Free and AI-free: Wikipedia plot summaries link the places they mention, and linked places have coordinates.
 // Runs in the visitor's browser (Wikipedia's API allows this with origin=*).
 (function(){
