@@ -1544,7 +1544,7 @@ async function route(){
     setNav(""); showPanel("map");
     const name = decodeURIComponent(b).toLowerCase();
     if(me && name === me.username){ setNav("home"); return showMine(); }
-    if(name === FEATURED.username || ["henry","grant"].includes(name)) return showMap(FEATURED, FEATURED.films, false);   // the starter map: no lookup needed
+    if(name === FEATURED.username) return showMap(FEATURED, FEATURED.films, false);   // the starter map: no lookup needed
     if(sb){
       const {data:p} = await sb.from("profiles").select("*").eq("username", name).maybeSingle();
       if(p){ const films = await fetchLogs(p.id).catch(()=>[]); return showMap(p, films, false); }
