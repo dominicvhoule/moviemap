@@ -485,6 +485,7 @@ async function openFilm(f, fly){
       ${list.length ? `<div class="more"><div class="more-h"><b class="sub" style="font-size:15px">${esc(sim.heading)}</b><span class="hint">Scroll for more →</span></div>
         <ul>${list.map((m,i)=>`<li><button type="button" data-i="${i}" title="Log ${esc(m.t)}"><span class="th" style="background-image:url('${MM.poster(m.poster, "w185")}')"></span><span class="t">${esc(m.t)}</span><span class="y">${esc(m.y)}${MM.isTv(m.tmdb) ? " · Series" : ""}</span></button></li>`).join("")}</ul>
         <p class="hint" style="font-size:12px;margin:0">Tap one to see where it's set, watch the trailer or find where to stream it.</p></div>` : ""}
+      ${tmdbCredit()}
     </div>`;
   detail.hidden = false; detail.scrollTop = 0;
   detail.querySelector(".x").onclick = closeDetail;
@@ -543,6 +544,7 @@ async function openPreview(m, from){
         ${groups.length ? groups.map(([label, list])=>`<div class="wrow"><span class="wl">${label}</span><ul>${list.slice(0, 8).map(p=>`<li><a href="${esc(watchLink(p, {tmdb:m.tmdb, t:title}, wp.link))}" target="_blank" rel="noopener sponsored" title="${esc(p.provider_name)}"><img src="${MM.TMDB_IMG}w92${p.logo_path}" alt="${esc(p.provider_name)}" loading="lazy"></a></li>`).join("")}</ul></div>`).join("")
           : `<p class="hint" style="margin:4px 0 0">Not streaming, for rent or for sale in your country right now.</p>`}
         <p class="hint" style="font-size:11px;margin:6px 0 0">Streaming information by JustWatch.</p></div>
+      ${tmdbCredit()}
     </div>`;
   detail.hidden = false; detail.scrollTop = 0;
   detail.querySelector(".x").onclick = closeDetail;
@@ -554,6 +556,9 @@ async function openPreview(m, from){
     tb.remove();
   };
 }
+// TMDB's required credit: their logo and notice at the foot of every card that shows their data.
+const TMDB_LOGO = "https://www.themoviedb.org/assets/2/v4/logos/v2/blue_short-8e7b30f73a4020692ccca9c88bafe5dcb6f8a62a4c6bc55cd9ba82bb2cd95f6c.svg";
+const tmdbCredit = () => `<div class="tmdb-credit"><a href="https://www.themoviedb.org/" target="_blank" rel="noopener" aria-label="The Movie Database (TMDB)"><img src="${TMDB_LOGO}" alt="TMDB" width="92" height="12"></a><span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span></div>`;
 function closeDetail(){ preview = null; openToken++; detail.hidden = true; selected = null; renderPins(); markListSelection(); }
 
 /* ================= profile + logbook ================= */

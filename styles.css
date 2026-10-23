@@ -442,3 +442,8 @@ a{color:var(--sky)}
   .stats b{font-size:20px}
   .detail .stub h3{font-size:19px}
 }
+/* TMDB credit at the foot of film cards */
+.tmdb-credit{display:flex;align-items:center;gap:10px;border-top:1px solid var(--line);padding-top:10px;margin-top:2px}
+.tmdb-credit a{flex:none;line-height:0}
+.tmdb-credit img{display:block;width:92px;height:auto}
+.tmdb-credit span{font-size:10.5px;line-height:1.35;color:var(--muted)}
