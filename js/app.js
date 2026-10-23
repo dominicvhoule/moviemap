@@ -625,7 +625,6 @@ async function renderCTA(){
   const cta = $("#cta"), ov = $("#overlap");
   ov.hidden = true; cta.innerHTML = "";
   const o = viewing.owner || {};
-  paintFollowCounts(o);
   if(viewing.mine){
     cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a>${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
     const sh = $("#share"); if(sh) sh.onclick = ()=>shareLink(profileURL(me.username), "My map on TheMovieMap");
@@ -658,27 +657,15 @@ async function renderCTA(){
   }
   if(o.letterboxd){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "https://letterboxd.com/" + encodeURIComponent(o.letterboxd) + "/"; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Letterboxd ↗"; cta.append(a); }
 }
-// "12 followers · 8 following" under a member's stats, counting people who have a movie map.
-async function paintFollowCounts(o){
-  const el = $("#fcount"); el.hidden = true;
-  if(!sb || !o.id) return;
-  const [a, b] = await Promise.all([
-    sb.from("follows").select("p:profiles!follows_follower_fkey(logs(count))").eq("followee", o.id).limit(1000),
-    sb.from("follows").select("p:profiles!follows_followee_fkey(logs(count))").eq("follower", o.id).limit(1000)
-  ]);
-  if(viewing.owner !== o && !(viewing.mine && me && me.id === o.id)) return;
-  const n = r => (r.data || []).filter(x=>hasMovieMap(x.p)).length;
-  const followers = n(a), following = n(b);
-  el.innerHTML = `<b>${followers}</b> follower${followers === 1 ? "" : "s"} · <b>${following}</b> following`;
-  el.hidden = false;
-}
 function renderAll(){ setOwnerHeader(); renderPins(); renderList(); renderCTA(); renderCountryList(); renderFollowCounts(); }
 // Followers / following, under the stats of any member's map (yours included).
+// Counts only people who have a movie map: follows are shared with Bookmap, whose readers may not.
 async function followCounts(id){
   const [a, b] = await Promise.all([
-    sb.from("follows").select("follower", {count:"exact", head:true}).eq("followee", id),
-    sb.from("follows").select("followee", {count:"exact", head:true}).eq("follower", id)]);
-  return {followers:a.count || 0, following:b.count || 0};
+    sb.from("follows").select("p:profiles!follows_follower_fkey(logs(count))").eq("followee", id).limit(2000),
+    sb.from("follows").select("p:profiles!follows_followee_fkey(logs(count))").eq("follower", id).limit(2000)]);
+  const n = r => (r.data || []).filter(x=>hasMovieMap(x.p)).length;
+  return {followers:n(a), following:n(b)};
 }
 async function renderFollowCounts(){
   const el = $("#fcount"), o = viewing.owner || {};
@@ -699,10 +686,11 @@ async function renderFollowList(p, which){
     ? sb.from("follows").select("p:profiles!follows_follower_fkey(id,username,display_name,logs(count))").eq("followee", p.id)
     : sb.from("follows").select("p:profiles!follows_followee_fkey(id,username,display_name,logs(count))").eq("follower", p.id);
   const {data} = await q.order("created_at", {ascending:false}).limit(200);
-  const list = (data || []).map(r=>r.p).filter(Boolean);
+  const all = (data || []).map(r=>r.p).filter(Boolean), list = all.filter(hasMovieMap), rest = all.length - list.length;
   const mine = me && me.id === p.id;
-  $("#fl").innerHTML = list.length ? list.map(personCard).join("")
-    : `<p class="hint">${which === "followers" ? (mine ? "No followers yet. Share your map to get some." : "No followers yet.") : (mine ? "You're not following anyone yet. Find people on the People tab." : "Not following anyone yet.")}</p>`;
+  const note = rest ? `<p class="hint" style="margin:0;font-size:12.5px">${rest} more ${rest === 1 ? "person hasn't" : "people haven't"} started a movie map yet (follows are shared with Bookmap).</p>` : "";
+  $("#fl").innerHTML = list.length ? list.map(personCard).join("") + note : (note ||
+    `<p class="hint">${which === "followers" ? (mine ? "No followers yet. Share your map to get some." : "No followers yet.") : (mine ? "You're not following anyone yet. Find people on the People tab." : "Not following anyone yet.")}</p>`);
 }
 
 function showMap(owner, films, mine){
