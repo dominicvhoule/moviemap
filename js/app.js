@@ -64,12 +64,15 @@ if(sb){
   };
 }
 
-/* ================= my films: account or this browser ================= */
+/* ================= my films: saved to your account ================= */
+// Maps live on accounts only. Films saved in a browser by an older version of the site (LOCAL) are
+// moved onto the account the next time that browser signs in, then cleared.
 const LOCAL = "mm-local-films";
+const NEED_ACCOUNT = "Create an account or sign in to save films to your map.";
 const Store = {
   async load(){
     if(cloud()) return fetchLogs(me.id);
-    return MM.lsGet(LOCAL, []);
+    return sb ? [] : MM.lsGet(LOCAL, []);   // (only a site without accounts keeps films in the browser)
   },
   async add(list){
     if(!list.length) return {added:0};
@@ -83,6 +86,7 @@ const Store = {
       }
       return {added};
     }
+    if(sb) throw new Error(NEED_ACCOUNT);
     const cur = MM.lsGet(LOCAL, []); const have = new Set(cur.map(MM.filmKey));
     const fresh = list.filter(f=>!have.has(MM.filmKey(f)));
     if(!MM.lsSet(LOCAL, [...fresh, ...cur])) throw new Error("This browser is out of storage space. Create an account to keep more films.");
@@ -94,6 +98,7 @@ const Store = {
       const {error} = await sb.from("logs").update({lat:row.lat, lon:row.lon, approx:row.approx, place:row.place, country:row.country, continent:row.continent, note:row.note, rating:row.rating, source:row.source}).eq("id", f.id);
       if(error) throw error;
     } else if(!cloud()){
+      if(sb) throw new Error(NEED_ACCOUNT);
       const cur = MM.lsGet(LOCAL, []); const k = MM.filmKey(f);
       MM.lsSet(LOCAL, cur.map(x=>MM.filmKey(x)===k ? Object.assign({}, x, patch) : x));
     }
@@ -101,7 +106,7 @@ const Store = {
   },
   async remove(f){
     if(cloud() && f.id){ const {error} = await sb.from("logs").delete().eq("id", f.id); if(error) throw error; }
-    else if(!cloud()){ const k = MM.filmKey(f); MM.lsSet(LOCAL, MM.lsGet(LOCAL, []).filter(x=>MM.filmKey(x)!==k)); }
+    else if(!cloud()){ if(sb) throw new Error(NEED_ACCOUNT); const k = MM.filmKey(f); MM.lsSet(LOCAL, MM.lsGet(LOCAL, []).filter(x=>MM.filmKey(x)!==k)); }
   }
 };
 let myFilms = [];
@@ -646,13 +651,44 @@ async function renderCTA(){
       const res = following ? await sb.from("follows").delete().eq("follower", me.id).eq("followee", o.id) : await sb.from("follows").insert({follower:me.id, followee:o.id});
       b.disabled = false;
       if(res.error) return toast("That didn't go through. Try again.");
-      following = !following; paint();
+      following = !following; paint(); renderFollowCounts();
     };
     cta.prepend(b);
   }
   if(o.letterboxd){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "https://letterboxd.com/" + encodeURIComponent(o.letterboxd) + "/"; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Letterboxd ↗"; cta.append(a); }
 }
-function renderAll(){ setOwnerHeader(); renderPins(); renderList(); renderCTA(); renderCountryList(); }
+function renderAll(){ setOwnerHeader(); renderPins(); renderList(); renderCTA(); renderCountryList(); renderFollowCounts(); }
+// Followers / following, under the stats of any member's map (yours included).
+async function followCounts(id){
+  const [a, b] = await Promise.all([
+    sb.from("follows").select("follower", {count:"exact", head:true}).eq("followee", id),
+    sb.from("follows").select("followee", {count:"exact", head:true}).eq("follower", id)]);
+  return {followers:a.count || 0, following:b.count || 0};
+}
+async function renderFollowCounts(){
+  const el = $("#fcount"), o = viewing.owner || {};
+  if(!sb || !o.id || !o.username){ el.hidden = true; return; }
+  const c = await followCounts(o.id).catch(()=>null);
+  if(!c || viewing.owner !== o){ return; }
+  const u = encodeURIComponent(o.username);
+  el.innerHTML = `<a href="#/u/${u}/followers"><b>${c.followers}</b> ${c.followers === 1 ? "follower" : "followers"}</a><a href="#/u/${u}/following"><b>${c.following}</b> following</a>`;
+  el.hidden = false;
+}
+// A list of who follows someone, or who they follow.
+async function renderFollowList(p, which){
+  const el = $("#explore");
+  const name = p.display_name || p.username;
+  el.innerHTML = `<button type="button" class="back" id="fl-back">← ${esc(name)}'s map</button><h2 class="h">${which === "followers" ? "Followers" : "Following"}</h2><div class="list" id="fl"><p class="hint">Loading…</p></div>`;
+  $("#fl-back").onclick = ()=>{ location.hash = "#/u/" + encodeURIComponent(p.username); };
+  const q = which === "followers"
+    ? sb.from("follows").select("p:profiles!follows_follower_fkey(id,username,display_name,logs(count))").eq("followee", p.id)
+    : sb.from("follows").select("p:profiles!follows_followee_fkey(id,username,display_name,logs(count))").eq("follower", p.id);
+  const {data} = await q.order("created_at", {ascending:false}).limit(200);
+  const list = (data || []).map(r=>r.p).filter(Boolean);
+  const mine = me && me.id === p.id;
+  $("#fl").innerHTML = list.length ? list.map(personCard).join("")
+    : `<p class="hint">${which === "followers" ? (mine ? "No followers yet. Share your map to get some." : "No followers yet.") : (mine ? "You're not following anyone yet. Find people on the People tab." : "Not following anyone yet.")}</p>`;
+}
 
 function showMap(owner, films, mine){
   viewing = {owner, films, mine};
@@ -808,15 +844,22 @@ function paintAccountLink(){ $("#acct-link").textContent = me ? "@" + me.usernam
 
 /* ---------- log a film: search TMDB, pick the right one, we find the setting ---------- */
 let draft = null, draftRating = null, searchT = null, searchSeq = 0;
+// Logging and Letterboxd need an account: signed-out visitors get this instead.
+function needAccount(el, title, what){
+  el.innerHTML = `<h2 class="h">${esc(title)}</h2>
+    <p class="hint" style="margin:0;font-size:15px;color:var(--ink)">Create a free account to ${what}. Your map is saved to your account, so it's there on any device and friends can follow it.</p>
+    <div class="cta"><a class="btn" href="#/account">Create an account</a><a class="btn ghost" href="#/account">Sign in</a></div>`;
+}
 function renderLog(){
-  showMine_keepView();
   const el = $("#log");
+  if(sb && !cloud()) return needAccount(el, "Log a film or series", "start logging films");
+  showMine_keepView();
   el.innerHTML = `<h2 class="h">Log a film or series</h2>
     <div class="search"><label for="lq" class="sr">Film title</label><input id="lq" type="search" autocomplete="off" placeholder="Search a film or series, e.g. Belén"></div>
     <p class="hint" id="ls">Start typing and pick the right film. We'll work out where it takes place.</p>
     <ul class="results" id="lr"></ul>
     <div id="lc" hidden></div>
-    ${!cloud() ? `<p class="notice">${sb ? 'You\'re not signed in, so films save in this browser only. <a href="#/account">Sign in</a> to keep them on your account.' : "Films save in this browser."}</p>` : ""}`;
+    ${!cloud() && !sb ? `<p class="notice">Films save in this browser.</p>` : ""}`;
   const q = $("#lq");
   q.addEventListener("input", ()=>{ clearTimeout(searchT); searchT = setTimeout(()=>runSearch(q.value.trim()), 280); });
   q.focus({preventScroll:true});
@@ -1225,8 +1268,9 @@ async function importLetterboxdExport(files, status, button){
 
 let lbEditing = false;   // the linked profile stays locked until "Change profile" is clicked
 function renderImport(){
-  showMine_keepView();
   const el = $("#import");
+  if(sb && !cloud()) return needAccount(el, "Letterboxd", "link your Letterboxd and bring in your films");
+  showMine_keepView();
   const lb = me && me.letterboxd;
   const last = cloud() ? MM.lsGet(lbSyncKey(), 0) : 0;
   const rep = cloud() ? MM.lsGet(lbReportKey(), null) : null;
@@ -1396,7 +1440,8 @@ async function renderExplore(){
     <div class="search"><label for="pq" class="sr">Search people</label><input id="pq" type="search" autocomplete="off" placeholder="Search by username or name"></div>
     <div class="list" id="pr"></div>
     ${cloud() ? `<div class="cta"><button class="btn ghost small" id="invite">Invite friends</button>${("contacts" in navigator && "ContactsManager" in window) ? `<button class="btn ghost small" id="fromcontacts">Find friends in contacts</button>` : ""}</div><div id="cres"></div>
-      <h3 class="sub">Following</h3><div class="list" id="following"><p class="hint">Loading…</p></div>` : `<p class="notice"><a href="#/account">Sign in</a> to follow people and find friends from your contacts.</p>`}
+      <h3 class="sub">Following</h3><div class="list" id="following"><p class="hint">Loading…</p></div>
+      <h3 class="sub">Followers</h3><div class="list" id="followers"><p class="hint">Loading…</p></div>` : `<p class="notice"><a href="#/account">Sign in</a> to follow people and find friends from your contacts.</p>`}
     <h3 class="sub">New on TheMovieMap</h3><div class="list" id="newest"><p class="hint">Loading…</p></div>
     <h3 class="sub">Starter map</h3><div class="list">${starter}</div>`;
   let t; $("#pq").addEventListener("input", e=>{ clearTimeout(t); t = setTimeout(()=>searchPeople(e.target.value.trim()), 250); });
@@ -1406,6 +1451,9 @@ async function renderExplore(){
     const {data} = await sb.from("follows").select("followee:profiles!follows_followee_fkey(id,username,display_name,logs(count))").eq("follower", me.id).limit(100);
     const fl = (data||[]).map(r=>r.followee).filter(Boolean);
     $("#following").innerHTML = fl.length ? fl.map(personCard).join("") : `<p class="hint">You're not following anyone yet. Search above, or invite friends.</p>`;
+    const {data:fr} = await sb.from("follows").select("follower:profiles!follows_follower_fkey(id,username,display_name,logs(count))").eq("followee", me.id).limit(100);
+    const frs = (fr||[]).map(r=>r.follower).filter(Boolean);
+    const fe = $("#followers"); if(fe) fe.innerHTML = frs.length ? frs.map(personCard).join("") : `<p class="hint">No followers yet. Share your map with "Invite friends".</p>`;
   }
   const {data:newest} = await sb.from("profiles").select("id,username,display_name,logs(count)").order("created_at", {ascending:false}).limit(12);
   const nn = $("#newest"); if(nn) nn.innerHTML = (newest||[]).length ? newest.map(personCard).join("") : `<p class="hint">Nobody yet. Be the first.</p>`;
@@ -1539,7 +1587,15 @@ async function route(){
   const h = location.hash || "#/";
   if(/access_token|error_description|type=recovery/.test(h)) return;   // Supabase is handling a sign-in link
   closeDetail(); preview = null; picking = null; $("#pickhint").hidden = true; $("#map").classList.remove("picking");
-  const [, a, b] = h.split("/");
+  const [, a, b, c] = h.split("/");
+  if(a === "u" && b && (c === "followers" || c === "following") && sb){
+    setNav("explore"); showPanel("explore");
+    const name = decodeURIComponent(b).toLowerCase();
+    const p = me && name === me.username ? me : (await sb.from("profiles").select("*").eq("username", name).maybeSingle()).data;
+    if(!p){ $("#explore").innerHTML = `<h2 class="h">Not found</h2><p class="hint">No one has this username.</p>`; return; }
+    if(!viewing.owner || viewing.owner.id !== p.id){ if(me && p.id === me.id) showMine(); else showMap(p, await fetchLogs(p.id).catch(()=>[]), false); }
+    return renderFollowList(p, c);
+  }
   if(a === "u" && b){
     setNav(""); showPanel("map");
     const name = decodeURIComponent(b).toLowerCase();
@@ -1569,8 +1625,8 @@ function showWelcome(){
   const n = FEATURED.films.length, nc = new Set(FEATURED.films.map(f=>f.c)).size;
   $("#welcome").innerHTML = `<h2 class="h">See the world one film at a time</h2>
     <p class="hint" style="margin:0;font-size:15px;color:var(--ink)">Log the films you watch and each one is pinned where its story is set. Your map fills in as you go, and friends can follow it.</p>
-    <div class="cta">${sb ? `<a class="btn" href="#/account">Create an account</a>` : `<a class="btn" href="#/log">Start your map</a>`}<a class="btn ghost" href="#/import">Bring in Letterboxd</a></div>
-    ${sb ? `<p class="hint" style="margin:0">Already have one? <a href="#/account">Sign in</a></p>` : ""}
+    <div class="cta">${sb ? `<a class="btn" href="#/account">Create an account</a>` : `<a class="btn" href="#/log">Start your map</a>`}${sb ? `<a class="btn ghost" href="#/account">Sign in</a>` : ""}</div>
+    <p class="hint" style="margin:0">Then link your Letterboxd to bring your films in.</p>
     <h3 class="sub" style="margin-top:14px">Or look around first</h3>
     <div class="list"><a class="ucard" href="#/u/${FEATURED.username}"><span class="avatar" style="background:${MM.avatarColor(FEATURED.username)}">${esc(FEATURED.name[0])}</span><span style="min-width:0"><b>${esc(FEATURED.name)}</b><span class="m">Starter map · ${n} films from ${nc} countries</span></span><em><b>${n}</b><br>films</em></a></div>`;
 }

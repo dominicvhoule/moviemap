@@ -449,3 +449,8 @@ a{color:var(--sky)}
 .tmdb-credit span{font-size:10.5px;line-height:1.35;color:var(--muted)}
 .credit-logo{display:block;width:max-content;line-height:0;margin:2px 0 8px}
 .credit-logo img{display:block;width:110px;height:auto}
+/* followers / following under a map's stats */
+.fcount{display:flex;gap:18px;margin:0;font-size:14px}
+.fcount a{color:var(--ink);text-decoration:none}
+.fcount a:hover{color:var(--rust);text-decoration:underline}
+.fcount b{font-weight:900}
