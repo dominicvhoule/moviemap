@@ -9,7 +9,7 @@ const BRAND = {
   words:{eyebrowA:"WHERE MY FILMS TOOK ME", passport:"FILM PASSPORT", atlas:"AN ATLAS OF", marquee:"NOW SHOWING IN", span:"YEARS OF CINEMA", dest:"DESTINATION"},
   c:{dark:"#0E3B2C", darkLand:"#1C5240", darkDeep:"#082A1F", accent:"#FFC93C", hot:"#C8281C", light:"#FFFFFF", paleOcean:"#D9E6DF", paleLand:"#E4ECE7",
      soft:"#3F6457", mutedOnDark:"#A9C7BA", line:"#DCE7E1", atlasBg:"#F4F8F5", border:"#B9CDC3", mqLand:"#FFE39A", mqVisited:"#FFF4D0", onAccent:"#0E3B2C"},
-  f:{display:"Archivo", displayWeight:900, upper:true, body:"Archivo", mono:"Space Mono"},
+  f:{display:"Archivo", displayWeight:900, upper:true, body:"Archivo", bodyMax:900, mono:"Space Mono", monoMax:700},
   fonts:["900 100px Archivo","800 100px Archivo","700 100px Archivo","500 100px Archivo","400 100px Archivo","700 100px 'Space Mono'","400 100px 'Space Mono'"],
   mark(ctx, x, y, s, onDark){        // a pin projected on an outdoor-cinema screen
     const k = s / 32; ctx.save(); ctx.translate(x, y); ctx.scale(k, k);
@@ -44,8 +44,8 @@ MM.posterFontsReady = async function(){
 /* ---------- type helpers (all sizes in layout units) ---------- */
 const fam = n => `"${n}", Arial, sans-serif`;
 const FD = px => `${BRAND.f.displayWeight} ${px}px ${fam(BRAND.f.display)}`;
-const FB = (px, wt) => `${wt || 400} ${px}px ${fam(BRAND.f.body)}`;
-const FM = (px, wt) => `${wt || 700} ${px}px ${fam(BRAND.f.mono)}`;
+const FB = (px, wt) => `${Math.min(wt || 400, BRAND.f.bodyMax)} ${px}px ${fam(BRAND.f.body)}`;
+const FM = (px, wt) => `${Math.min(wt || 700, BRAND.f.monoMax)} ${px}px ${fam(BRAND.f.mono)}`;
 const up = s => BRAND.f.upper ? String(s).toUpperCase() : String(s);
 function txt(ctx, s, x, y, font, color, align, spacing){
   ctx.font = font; ctx.fillStyle = color; ctx.textAlign = align || "left";
@@ -135,13 +135,13 @@ function drawMap(ctx, S, opts, box, st){
     if(st.mode === "bubble" && p.g.n < 2) return;
     const label = String(st.mode === "index" ? p.i + 1 : p.g.n);
     const px = st.mode === "bubble" ? Math.min(14, 8 + p.g.n) : label.length > 1 ? 9 : 10;
-    ctx.textBaseline = "middle"; txt(ctx, label, p.x, p.y + 0.5, `800 ${px}px ${fam(BRAND.f.body)}`, st.pinText, "center"); ctx.textBaseline = "alphabetic";
+    ctx.textBaseline = "middle"; txt(ctx, label, p.x, p.y + 0.5, FB(px, 800), st.pinText, "center"); ctx.textBaseline = "alphabetic";
   });
   ctx.restore();
 }
 
 function logo(ctx, xRight, yBottom, size, color, onDark){
-  const font = `900 ${size * 0.58}px ${fam(BRAND.f.body)}`;
+  const font = FB(size * 0.58, 900);
   const w = width(ctx, BRAND.name, font, 0.3);
   BRAND.mark(ctx, xRight - w - size - 8, yBottom - size + size*0.08, size, onDark);
   txt(ctx, BRAND.name, xRight, yBottom - size*0.28, font, color, "right", 0.3);
@@ -193,7 +193,7 @@ function passport(ctx, LW, H, S, opts){
   // the logo badge, top right
   rect(ctx, LW - P - badgeW, 44, badgeW, 76, C.dark);
   BRAND.mark(ctx, LW - P - badgeW/2 - 17, 52, 34, true);
-  txt(ctx, BRAND.name, LW - P - badgeW/2, 108, `900 11px ${fam(BRAND.f.body)}`, "#FFFFFF", "center", 0.5);
+  txt(ctx, BRAND.name, LW - P - badgeW/2, 108, FB(11, 900), "#FFFFFF", "center", 0.5);
   const mapY = 142, mapW = LW - 2*P, mapH = Math.min(mapW * 0.456, H - mapY - 236);
   drawMap(ctx, S, opts, {x:P, y:mapY, w:mapW, h:mapH}, {land:C.paleLand, border:"#FFFFFF", visited:C.accent, vline:C.dark, pin:C.hot, pinText:"#FFFFFF", ring:"#FFFFFF", leader:C.soft, mode:"count"});
   // passport stamps for the top countries
@@ -263,7 +263,7 @@ function marquee(ctx, LW, H, S, opts){
   rect(ctx, 0, 0, LW, H, C.accent);
   const P = 30, title = up(opts.title);
   // the logo badge, top right
-  const bfont = `900 15px ${fam(BRAND.f.body)}`, bw = width(ctx, BRAND.name, bfont, 0.3) + 58;
+  const bfont = FB(15, 900), bw = width(ctx, BRAND.name, bfont, 0.3) + 58;
   rect(ctx, LW - P - bw + 4, P + 4, bw, 46, C.onAccent); rect(ctx, LW - P - bw, P, bw, 46, "#FFFFFF");
   ctx.strokeStyle = C.onAccent; ctx.lineWidth = 3; ctx.strokeRect(LW - P - bw, P, bw, 46);
   BRAND.mark(ctx, LW - P - bw + 10, P + 9, 28, false);
