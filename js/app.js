@@ -625,6 +625,7 @@ async function renderCTA(){
   const cta = $("#cta"), ov = $("#overlap");
   ov.hidden = true; cta.innerHTML = "";
   const o = viewing.owner || {};
+  paintFollowCounts(o);
   if(viewing.mine){
     cta.innerHTML = `<a class="btn" href="#/log">Log a film</a><a class="btn ghost" href="#/import">Letterboxd</a>${cloud() ? `<button class="btn ghost" id="share">Share</button>` : ""}`;
     const sh = $("#share"); if(sh) sh.onclick = ()=>shareLink(profileURL(me.username), "My map on TheMovieMap");
@@ -656,6 +657,20 @@ async function renderCTA(){
     cta.prepend(b);
   }
   if(o.letterboxd){ const a = document.createElement("a"); a.className = "btn ghost"; a.href = "https://letterboxd.com/" + encodeURIComponent(o.letterboxd) + "/"; a.target = "_blank"; a.rel = "noopener"; a.textContent = "Letterboxd ↗"; cta.append(a); }
+}
+// "12 followers · 8 following" under a member's stats, counting people who have a movie map.
+async function paintFollowCounts(o){
+  const el = $("#fcount"); el.hidden = true;
+  if(!sb || !o.id) return;
+  const [a, b] = await Promise.all([
+    sb.from("follows").select("p:profiles!follows_follower_fkey(logs(count))").eq("followee", o.id).limit(1000),
+    sb.from("follows").select("p:profiles!follows_followee_fkey(logs(count))").eq("follower", o.id).limit(1000)
+  ]);
+  if(viewing.owner !== o && !(viewing.mine && me && me.id === o.id)) return;
+  const n = r => (r.data || []).filter(x=>hasMovieMap(x.p)).length;
+  const followers = n(a), following = n(b);
+  el.innerHTML = `<b>${followers}</b> follower${followers === 1 ? "" : "s"} · <b>${following}</b> following`;
+  el.hidden = false;
 }
 function renderAll(){ setOwnerHeader(); renderPins(); renderList(); renderCTA(); renderCountryList(); renderFollowCounts(); }
 // Followers / following, under the stats of any member's map (yours included).
@@ -1442,6 +1457,7 @@ async function renderExplore(){
     ${cloud() ? `<div class="cta"><button class="btn ghost small" id="invite">Invite friends</button>${("contacts" in navigator && "ContactsManager" in window) ? `<button class="btn ghost small" id="fromcontacts">Find friends in contacts</button>` : ""}</div><div id="cres"></div>
       <h3 class="sub">Following</h3><div class="list" id="following"><p class="hint">Loading…</p></div>
       <h3 class="sub">Followers</h3><div class="list" id="followers"><p class="hint">Loading…</p></div>` : `<p class="notice"><a href="#/account">Sign in</a> to follow people and find friends from your contacts.</p>`}
+    ${cloud() ? `<p class="hint" style="margin:0;font-size:12.5px">Follows are shared with Bookmap: follow someone on either site and it counts on both.</p>` : ""}
     <h3 class="sub">New on TheMovieMap</h3><div class="list" id="newest"><p class="hint">Loading…</p></div>
     <h3 class="sub">Starter map</h3><div class="list">${starter}</div>`;
   let t; $("#pq").addEventListener("input", e=>{ clearTimeout(t); t = setTimeout(()=>searchPeople(e.target.value.trim()), 250); });
@@ -1449,15 +1465,21 @@ async function renderExplore(){
     $("#invite").onclick = ()=>shareLink(profileURL(me.username), "Follow my map on TheMovieMap");
     const fc = $("#fromcontacts"); if(fc) fc.onclick = findFromContacts;
     const {data} = await sb.from("follows").select("followee:profiles!follows_followee_fkey(id,username,display_name,logs(count))").eq("follower", me.id).limit(100);
-    const fl = (data||[]).map(r=>r.followee).filter(Boolean);
-    $("#following").innerHTML = fl.length ? fl.map(personCard).join("") : `<p class="hint">You're not following anyone yet. Search above, or invite friends.</p>`;
+    const flAll = (data||[]).map(r=>r.followee).filter(Boolean), fl = flAll.filter(hasMovieMap), flRest = flAll.length - fl.length;
+    $("#following").innerHTML = (fl.length ? fl.map(personCard).join("") : `<p class="hint">${flRest ? "None of the people you follow have a movie map yet." : "You're not following anyone yet. Search above, or invite friends."}</p>`)
+      + (flRest ? `<p class="hint" style="margin:0;font-size:12.5px">${flRest} more ${flRest === 1 ? "person" : "people"} you follow ${flRest === 1 ? "hasn't" : "haven't"} started a movie map yet. They'll show up here once they log a film.</p>` : "");
     const {data:fr} = await sb.from("follows").select("follower:profiles!follows_follower_fkey(id,username,display_name,logs(count))").eq("followee", me.id).limit(100);
-    const frs = (fr||[]).map(r=>r.follower).filter(Boolean);
-    const fe = $("#followers"); if(fe) fe.innerHTML = frs.length ? frs.map(personCard).join("") : `<p class="hint">No followers yet. Share your map with "Invite friends".</p>`;
+    const frAll = (fr||[]).map(r=>r.follower).filter(Boolean), frs = frAll.filter(hasMovieMap), frRest = frAll.length - frs.length;
+    const fe = $("#followers"); if(fe) fe.innerHTML = (frs.length ? frs.map(personCard).join("") : `<p class="hint">${frRest ? "None of your followers have a movie map yet." : `No followers yet. Share your map with "Invite friends".`}</p>`)
+      + (frRest ? `<p class="hint" style="margin:0;font-size:12.5px">${frRest} more ${frRest === 1 ? "follower hasn't" : "followers haven't"} started a movie map yet.</p>` : "");
   }
-  const {data:newest} = await sb.from("profiles").select("id,username,display_name,logs(count)").order("created_at", {ascending:false}).limit(12);
-  const nn = $("#newest"); if(nn) nn.innerHTML = (newest||[]).length ? newest.map(personCard).join("") : `<p class="hint">Nobody yet. Be the first.</p>`;
+  const {data:recent} = await sb.from("profiles").select("id,username,display_name,logs(count)").order("created_at", {ascending:false}).limit(80);
+  const newest = (recent||[]).filter(hasMovieMap).slice(0, 12);
+  const nn = $("#newest"); if(nn) nn.innerHTML = newest.length ? newest.map(personCard).join("") : `<p class="hint">Nobody yet. Be the first.</p>`;
 }
+// Accounts and follows are shared with Bookmap (same Supabase project). Here we list only people who
+// have a movie map, i.e. at least one film logged; follows made on either site count on both.
+const hasMovieMap = p => !!(p && p.logs && p.logs[0] && p.logs[0].count > 0);
 function personCard(p){
   const n = p.logs && p.logs[0] ? p.logs[0].count : "";
   const name = p.display_name || p.username;
@@ -1467,9 +1489,10 @@ async function searchPeople(q){
   const box = $("#pr"); if(!box) return;
   if(q.length < 2){ box.innerHTML = ""; return; }
   const like = "%" + q.replace(/[%_\\]/g, m=>"\\" + m) + "%";
-  const {data, error} = await sb.from("profiles").select("id,username,display_name,logs(count)").or(`username.ilike.${like},display_name.ilike.${like}`).limit(20);
+  const {data:all, error} = await sb.from("profiles").select("id,username,display_name,logs(count)").or(`username.ilike.${like},display_name.ilike.${like}`).limit(40);
   if(error){ box.innerHTML = `<p class="err">Search didn't go through.</p>`; return; }
-  box.innerHTML = data.length ? data.map(personCard).join("") : `<p class="hint">No one matches "${esc(q)}".</p>`;
+  const data = all.filter(hasMovieMap).slice(0, 20);
+  box.innerHTML = data.length ? data.map(personCard).join("") : `<p class="hint">No one with a movie map matches "${esc(q)}".</p>`;
 }
 async function sha256(s){ const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s)); return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,"0")).join(""); }
 const normEmail = e => String(e||"").trim().toLowerCase();
