@@ -1598,6 +1598,7 @@ async function route(){
   const h = location.hash || "#/";
   if(/access_token|error_description|type=recovery/.test(h)) return;   // Supabase is handling a sign-in link
   closeDetail(); preview = null; picking = null; $("#pickhint").hidden = true; $("#map").classList.remove("picking");
+  if(mapView !== "map") setView("map");   // every page opens on the map; List and Stats are views of the map, not pages
   const [, a, b, c] = h.split("/");
   if(a === "u" && b && (c === "followers" || c === "following") && sb){
     setNav("explore"); showPanel("explore");
