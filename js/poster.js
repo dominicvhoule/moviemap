@@ -101,7 +101,9 @@ function summarize(opts){
 // mode: "count" (pins sized by count, showing it), "index" (numbered like the list), "bubble" (circles by size)
 function drawMap(ctx, S, opts, box, st){
   const shapes = opts.countries.filter(c=>c.properties.name !== "Antarctica");
-  const proj = d3.geoNaturalEarth1().fitExtent([[box.x + 4, box.y + 4], [box.x + box.w - 4, box.y + box.h - 4]], {type:"FeatureCollection", features:shapes});
+  // Fit the inhabited world (56°S to 84°N) rather than the shapes, whose date-line rings skew the bounds.
+  const frame = d3.geoGraticule().extent([[-179.9, -56], [179.9, 84]]).outline();
+  const proj = d3.geoNaturalEarth1().fitExtent([[box.x + 4, box.y + 4], [box.x + box.w - 4, box.y + box.h - 4]], frame);
   const path = d3.geoPath(proj, ctx);
   ctx.save(); ctx.beginPath(); ctx.rect(box.x, box.y, box.w, box.h); ctx.clip();
   if(st.ocean) rect(ctx, box.x, box.y, box.w, box.h, st.ocean);
@@ -154,11 +156,11 @@ function departure(ctx, LW, H, S, opts){
   txt(ctx, `${BRAND.words.eyebrowA}${span(S) ? " · " + span(S) : ""}`, P, 57, FB(13, 700), C.accent, "left", 2.3);
   const title = up(opts.title), tpx = fit(ctx, title, FD, Lw, 86, 40);
   txt(ctx, title, P - 2, 70 + tpx * 0.78, FD(tpx), C.light, "left", -1.5);
-  const mapY = 70 + tpx * 0.78 + 22, mapH = Math.min(Lw * 0.513, H - mapY - 150);
+  const mapY = 70 + tpx * 0.78 + 26, mapH = Math.min(Lw * 0.56, H - mapY - 150);
   drawMap(ctx, S, opts, {x:P, y:mapY, w:Lw, h:mapH}, {land:C.darkLand, border:C.dark, visited:C.accent, pin:C.hot, pinText:"#FFFFFF", ring:C.dark, leader:C.mutedOnDark, mode:"count"});
   const sy = mapY + mapH + 20; rect(ctx, P, sy, Lw, 3, C.accent);
-  const stats = [[S.n, up(S.n === 1 ? BRAND.noun : BRAND.nouns), C.accent], [S.countries, `${S.countries === 1 ? "COUNTRY" : "COUNTRIES"} · ${S.pct}% OF THE WORLD`], [S.continents, S.continents === 1 ? "CONTINENT" : "CONTINENTS"], [S.decades, S.decades === 1 ? "DECADE" : "DECADES"]];
-  stats.forEach(([v, l, col], i)=>{ const x = P + i * Lw / 4; txt(ctx, String(v), x, sy + 62, FD(52), col || C.light); txt(ctx, clip(ctx, l, FB(13, 700), Lw/4 - 8), x, sy + 84, FB(13, 700), C.light, "left", 1.2); });
+  const stats = [[S.n, up(S.n === 1 ? BRAND.noun : BRAND.nouns), C.accent], [S.countries, S.countries === 1 ? "COUNTRY" : "COUNTRIES"], [S.pct + "%", "OF THE WORLD"], [S.continents, S.continents === 1 ? "CONTINENT" : "CONTINENTS"], [S.decades, S.decades === 1 ? "DECADE" : "DECADES"]];
+  stats.forEach(([v, l, col], i)=>{ const x = P + i * Lw / 5; txt(ctx, String(v), x, sy + 62, FD(52), col || C.light); txt(ctx, l, x, sy + 84, FB(12, 700), C.light, "left", 1); });
   // the board
   txt(ctx, BRAND.words.dest, colX, 56, FM(12), C.accent, "left", 1); txt(ctx, up(BRAND.nouns), colX + colW, 56, FM(12), C.accent, "right", 1);
   rect(ctx, colX, 64, colW, 2, C.accent);
